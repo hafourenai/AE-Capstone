@@ -1,0 +1,13 @@
+{
+  "name": "sambal-joelid",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev:api": "npm --workspace @sambal-joelid/api run dev",
+    "dev:web": "npm --workspace @sambal-joelid/web run dev",
+    "start:api": "npm --workspace @sambal-joelid/api start",
+    "build": "npm --workspace @sambal-joelid/web run build",
+    "test": "npm --workspace @sambal-joelid/api test"
+  }
+}
