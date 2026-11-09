@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sambal Joelid — Catatan Deployment</title>
+  <style>
+    :root { --ink:#18201b; --paper:#f5f0e6; --card:#fffaf0; --line:#c9bdab; --red:#b44b2d; --green:#285d45; --gold:#d9a72e; }
+    * { box-sizing:border-box; } body { margin:0; color:var(--ink); background:var(--paper); font:16px/1.6 Georgia, serif; }
+    header { padding:64px max(7vw,24px) 42px; background:var(--ink); color:#fffaf0; border-bottom:8px solid var(--gold); }
+    header p { margin:0; font:700 12px/1.2 ui-monospace,monospace; letter-spacing:.14em; color:#f5c76b; } h1 { max-width:900px; margin:12px 0 0; font-size:clamp(36px,6vw,68px); line-height:1; } h2 { margin:48px 0 14px; font-size:30px; line-height:1.1; } h3 { margin:25px 0 8px; font-size:20px; } main { width:min(960px,calc(100% - 40px)); margin:auto; padding:28px 0 70px; }
+    .notice { padding:18px 20px; border-left:5px solid var(--red); background:#f7dfd3; } .good { border-left-color:var(--green); background:#e2eee5; } .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; } .card { padding:18px; background:var(--card); border:1px solid var(--line); } .label { color:var(--red); font:700 11px/1.2 ui-monospace,monospace; letter-spacing:.1em; } code { font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; } pre { overflow:auto; padding:16px; background:#1e2821; color:#f9f1df; border-radius:3px; white-space:pre-wrap; } table { width:100%; border-collapse:collapse; background:var(--card); } th,td { padding:11px; border:1px solid var(--line); text-align:left; vertical-align:top; } th { font:700 12px ui-monospace,monospace; background:#e9dfcc; } li { margin:7px 0; } a { color:var(--red); } .muted { color:#625e55; } footer { padding-top:35px; color:#625e55; font:12px ui-monospace,monospace; }
+  </style>
+</head>
+<body>
+<header><p>SAMBAL JOELID / OPERATIONS NOTE</p><h1>Deployment VPS, Vercel &amp; Domain</h1></header>
+<main>
+  <div class="notice good"><strong>Status terakhir:</strong> frontend dan API production sudah dapat diakses melalui HTTPS. Dokumen ini tidak berisi secret, password, token, private key, atau email pribadi.</div>
+
+  <h2>1. Arsitektur produksi</h2>
+  <div class="grid">
+    <div class="card"><div class="label">FRONTEND</div><strong>Vercel</strong><br><code>https://joelid.hontalk.my.id</code><br>React/Vite customer web &amp; dashboard admin.</div>
+    <div class="card"><div class="label">BACKEND</div><strong>VPS Ubuntu 24.04 LTS</strong><br><code>https://api.joelid.hontalk.my.id/api/v1</code><br>Express, Socket.IO, SQLite, Nginx, systemd.</div>
+    <div class="card"><div class="label">DATABASE</div><strong>SQLite persistent</strong><br><code>/var/lib/sambal-joelid/customer-module.sqlite</code><br>Hanya di VPS, tidak di Vercel.</div>
+  </div>
+
+  <h2>2. Domain dan DNS</h2>
+  <table><thead><tr><th>Hostname</th><th>DNS</th><th>Tujuan</th></tr></thead><tbody>
+    <tr><td><code>joelid.hontalk.my.id</code></td><td>CNAME → <code>cname.vercel-dns.com</code></td><td>Frontend Vercel</td></tr>
+    <tr><td><code>api.joelid.hontalk.my.id</code></td><td>A → <code>217.216.146.16</code></td><td>VPS / Nginx / API</td></tr>
+  </tbody></table>
+  <p>DNS authoritative dikelola oleh <strong>Vercel DNS</strong> karena nameserver aktif adalah <code>ns1.vercel-dns.com</code> dan <code>ns2.vercel-dns.com</code>. Anymhost berperan sebagai registrar; jangan mengganti nameserver tanpa rencana migrasi.</p>
+  <p>CAA root domain harus mengizinkan Let’s Encrypt untuk sertifikat API:</p>
+  <pre>Type: CAA
+Name: (kosong)
+Value: 0 issue "letsencrypt.org"
+TTL: 60</pre>
+
+  <h2>3. Akses VPS</h2>
+  <pre>ssh -p 20231 sambal@217.216.146.16</pre>
+  <div class="notice"><strong>Keamanan:</strong> gunakan akun <code>sambal</code> untuk operasional sehari-hari. Jangan membagikan password root, password <code>sambal</code>, key SSH, token GitHub, JWT secret, atau password admin.</div>
+  <h3>Komponen server</h3>
+  <ul><li>Ubuntu Server 24.04 LTS</li><li>Node.js 22 LTS dan npm</li><li>Nginx sebagai reverse proxy HTTPS/WebSocket</li><li>systemd untuk API dan backup timer</li><li>Certbot / Let’s Encrypt</li><li>UFW: inbound hanya port 22, 80, 443</li><li>SQLite CLI untuk backup aman</li></ul>
+
+  <h2>4. File dan service penting</h2>
+  <table><thead><tr><th>Item</th><th>Lokasi / perintah</th></tr></thead><tbody>
+    <tr><td>Source code</td><td><code>/var/www/sambal-joelid</code></td></tr>
+    <tr><td>Environment production</td><td><code>/var/www/sambal-joelid/.env</code> — permission <code>600</code></td></tr>
+    <tr><td>Database</td><td><code>/var/lib/sambal-joelid/customer-module.sqlite</code></td></tr>
+    <tr><td>API service</td><td><code>sudo systemctl status sambal-joelid-api</code></td></tr>
+    <tr><td>Nginx site</td><td><code>/etc/nginx/sites-available/api.joelid.hontalk.my.id</code></td></tr>
+    <tr><td>Repository</td><td><code>git@github.com:hafourenai/AE-Capstone.git</code></td></tr>
+  </tbody></table>
+
+  <h2>5. Deploy atau update API</h2>
+  <pre>cd /var/www/sambal-joelid
+git pull --ff-only
+npm ci --omit=dev
+sudo systemctl restart sambal-joelid-api
+sudo systemctl status sambal-joelid-api --no-pager
+curl https://api.joelid.hontalk.my.id/api/v1/health</pre>
+  <p>Target health check:</p><pre>{"ok":true}</pre>
+  <p>Jika branch VPS belum terhubung ke GitHub, lakukan sekali:</p>
+  <pre>git branch --set-upstream-to=origin/main main</pre>
+
+  <h2>6. Environment API</h2>
+  <p>Template ada di <code>.env.vps.example</code>. Nilai production penting:</p>
+  <pre>NODE_ENV=production
+PORT=3001
+CUSTOMER_MODULE_DB_PATH=/var/lib/sambal-joelid/customer-module.sqlite
+JWT_SECRET=&lt;nilai acak dari: openssl rand -hex 32&gt;
+ADMIN_EMAIL=&lt;email admin&gt;
+ADMIN_PASSWORD=&lt;password panjang dan unik&gt;
+CORS_ORIGINS=https://joelid.hontalk.my.id</pre>
+  <p>Setelah mengubah <code>.env</code>:</p><pre>sudo systemctl restart sambal-joelid-api</pre>
+
+  <h2>7. Nginx dan HTTPS</h2>
+  <p>Nginx meneruskan request ke API lokal <code>127.0.0.1:3001</code> dan mendukung WebSocket Socket.IO. Sebelum mengubah konfigurasi:</p>
+  <pre>sudo nginx -t
+sudo systemctl reload nginx</pre>
+  <p>Sertifikat Let’s Encrypt diterbitkan untuk API:</p>
+  <pre>sudo certbot --nginx -d api.joelid.hontalk.my.id --redirect
+curl -I https://api.joelid.hontalk.my.id/api/v1/health</pre>
+  <p>Pastikan renewal otomatis tersedia:</p>
+  <pre>sudo systemctl list-timers | grep certbot
+sudo certbot renew --dry-run</pre>
+
+  <h2>8. Vercel</h2>
+  <ul><li>Repository: <code>hafourenai/AE-Capstone</code>.</li><li>Build hanya workspace web melalui <code>vercel.json</code>; backend SQLite tidak ikut dibuild di Vercel.</li><li>Environment Variable: <code>VITE_API_BASE_URL=https://api.joelid.hontalk.my.id/api/v1</code>.</li><li>Custom domain: <code>joelid.hontalk.my.id</code>.</li></ul>
+  <p>Jika build Vercel gagal karena <code>better-sqlite3</code>, pastikan deployment mengambil commit yang memuat <code>vercel.json</code> dan redeploy. Penyebabnya adalah Vercel mencoba memasang dependency backend native, padahal hanya frontend yang perlu dibuild.</p>
+
+  <h2>9. Backup SQLite</h2>
+  <p>Skrip backup: <code>ops/backup-sqlite.sh</code>. Metodenya memakai <code>sqlite3 .backup</code>, aman untuk database dalam mode WAL. Jangan hanya menyalin file <code>.sqlite</code> aktif.</p>
+  <pre>sudo install -m 750 ops/backup-sqlite.sh /usr/local/bin/sambal-joelid-backup
+sudo install -m 644 ops/sambal-joelid-backup.service /etc/systemd/system/
+sudo install -m 644 ops/sambal-joelid-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now sambal-joelid-backup.timer
+sudo systemctl list-timers | grep sambal
+sudo systemctl start sambal-joelid-backup.service
+ls -lh /var/backups/sambal-joelid</pre>
+  <div class="notice"><strong>Penting:</strong> backup terjadwal lokal saja belum memenuhi proteksi bencana. Salin backup terenkripsi ke storage berbeda (misalnya object storage) dan uji restore secara berkala.</div>
+
+  <h2>10. Error yang pernah terjadi dan solusi</h2>
+  <table><thead><tr><th>Gejala</th><th>Penyebab</th><th>Solusi</th></tr></thead><tbody>
+    <tr><td>Vite lokal memberi <code>404</code></td><td><code>0.0.0.0</code> terbaca sebagai root directory Vite, bukan flag host.</td><td>Jalankan Vite dengan flag host yang benar, atau gunakan <code>npm run dev</code> untuk localhost.</td></tr>
+    <tr><td>Vercel gagal build pada <code>better-sqlite3</code></td><td>Seluruh monorepo diinstal, termasuk backend native SQLite pada runtime Vercel.</td><td><code>vercel.json</code> membatasi install/build ke <code>@sambal-joelid/web</code>; root <code>package.json</code> memakai Node 22.</td></tr>
+    <tr><td><code>git pull</code>: no tracking information</td><td>Branch <code>main</code> di VPS belum memiliki upstream.</td><td><code>git branch --set-upstream-to=origin/main main</code>, lalu <code>git pull --ff-only</code>.</td></tr>
+    <tr><td>APT gagal konek <code>archive.ubuntu.com:80</code></td><td>Koneksi HTTP mirror dari VPS gagal.</td><td>Ubah source Ubuntu dari <code>http://archive.ubuntu.com/ubuntu</code> menjadi HTTPS, kemudian paksa IPv4 bila perlu.</td></tr>
+    <tr><td>Certbot: ACME challenge <code>404</code></td><td>Domain belum diteruskan provider VPS ke instance atau request masuk ke proxy API.</td><td>Pastikan domain routing provider aktif dan buat location <code>/.well-known/acme-challenge/</code> menuju <code>/var/www/certbot</code>.</td></tr>
+    <tr><td><code>Domain belum terhubung ke VPS</code></td><td>Provider VPS shared/NAT IP belum mengenali hostname.</td><td>Tunggu atau aktifkan mapping domain provider. Validasi dengan <code>curl http://api.joelid.hontalk.my.id/.well-known/acme-challenge/check</code>.</td></tr>
+    <tr><td>Certbot ditolak CAA</td><td>CAA hanya mengizinkan issuer lain.</td><td>Tambahkan CAA root: <code>0 issue "letsencrypt.org"</code>. Jangan hapus CAA existing tanpa alasan.</td></tr>
+  </tbody></table>
+
+  <h2>11. Termux terpisah</h2>
+  <div class="notice"><strong>Jangan mencampur konfigurasi.</strong> Proyek Sambal Joelid di VPS tidak memakai konfigurasi Termux. Saat kembali ke Telegram Personal AI di Termux, gunakan file <code>D:\bot_honey\telegram_personal_ai\.env</code>, bukan file <code>/var/www/sambal-joelid/.env</code>.</div>
+
+  <footer>Diperbarui setelah konfigurasi domain dan HTTPS production berhasil. Simpan dokumen ini bersama repository; perbarui bila ada perubahan hosting, domain, atau arsitektur.</footer>
+</main>
+</body>
+</html>
