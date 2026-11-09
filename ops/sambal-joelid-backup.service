@@ -1,0 +1,8 @@
+[Unit]
+Description=Backup Sambal Joelid SQLite database
+
+[Service]
+Type=oneshot
+User=sambal
+Group=sambal
+ExecStart=/usr/local/bin/sambal-joelid-backup

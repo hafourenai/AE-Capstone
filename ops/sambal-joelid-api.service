@@ -1,0 +1,20 @@
+[Unit]
+Description=Sambal Joelid API
+After=network.target
+
+[Service]
+Type=simple
+User=sambal
+Group=sambal
+WorkingDirectory=/var/www/sambal-joelid
+EnvironmentFile=/var/www/sambal-joelid/.env
+ExecStart=/usr/bin/npm run start:api
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/www/sambal-joelid /var/lib/sambal-joelid
+
+[Install]
+WantedBy=multi-user.target

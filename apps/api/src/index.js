@@ -15,8 +15,12 @@ const env = {
   jwtSecret: process.env.JWT_SECRET || 'development-only-change-me', email: process.env.ADMIN_EMAIL || 'admin@sambaljoelid.local',
   password: process.env.ADMIN_PASSWORD || 'change-this-before-production', origins: (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',')
 };
+if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'development-only-change-me')) {
+  throw new Error('JWT_SECRET wajib diatur dengan nilai acak yang kuat pada production.');
+}
 const db = openDatabase(env.dbPath); const app = express(); const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: env.origins, methods: ['GET', 'POST'] } });
+app.set('trust proxy', 1);
 app.use(helmet()); app.use(cors({ origin: env.origins })); app.use(express.json({ limit: '32kb' }));
 const publicLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false });
 const api = express.Router(); app.use('/api/v1', api);

@@ -18,3 +18,5 @@ API membuat SQLite di `CUSTOMER_MODULE_DB_PATH`, menjalankan schema migration am
 - API: jalankan `apps/api` di VPS sebagai service, dengan `CUSTOMER_MODULE_DB_PATH=/var/lib/sambal-joelid/customer-module.sqlite`.
 - Set `CORS_ORIGINS` ke domain Vercel resmi dan gunakan HTTPS reverse proxy.
 - Backup SQLite: gunakan `.backup` SQLite atau `VACUUM INTO` secara terjadwal ke storage berbeda; jangan menyalin file aktif pada mode WAL secara langsung.
+
+Deployment artifacts tersedia dalam `ops/`: systemd API, systemd timer backup, Nginx proxy untuk `api.hontalk.my.id`, dan skrip backup yang aman untuk SQLite WAL. Salin `.env.vps.example` ke `.env` hanya pada VPS. Konfigurasi ini tidak berlaku untuk Termux; lihat komentar `TERMUX NOTE` pada file tersebut.
