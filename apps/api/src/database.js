@@ -33,6 +33,47 @@ export function openDatabase(filename) {
     CREATE INDEX IF NOT EXISTS idx_complaints_status_created ON customer_complaints(status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_complaints_branch ON customer_complaints(branch_id);
   `);
+
+  // Migrasi additive: tambah kolom source jika belum ada
+  const orderColumns = db.prepare("PRAGMA table_info(customer_orders)").all();
+  if (!orderColumns.some(col => col.name === 'source')) {
+    db.exec("ALTER TABLE customer_orders ADD COLUMN source TEXT NOT NULL DEFAULT 'WEB' CHECK(source IN ('WEB','WHATSAPP'))");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_orders_source ON customer_orders(source)");
+  }
+
+  const complaintColumns = db.prepare("PRAGMA table_info(customer_complaints)").all();
+  if (!complaintColumns.some(col => col.name === 'source')) {
+    db.exec("ALTER TABLE customer_complaints ADD COLUMN source TEXT NOT NULL DEFAULT 'WEB' CHECK(source IN ('WEB','WHATSAPP'))");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_complaints_source ON customer_complaints(source)");
+  }
+
+  // Tabel WhatsApp baru
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS whatsapp_conversations (
+      id INTEGER PRIMARY KEY, phone TEXT NOT NULL UNIQUE, customer_name TEXT,
+      state TEXT NOT NULL DEFAULT 'AI_ACTIVE' CHECK(state IN ('AI_ACTIVE','WAITING_ADMIN','ADMIN_ACTIVE')),
+      last_message_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS whatsapp_messages (
+      id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL REFERENCES whatsapp_conversations(id) ON DELETE CASCADE,
+      waha_message_id TEXT UNIQUE, direction TEXT NOT NULL CHECK(direction IN ('INBOUND','OUTBOUND')),
+      sender_type TEXT NOT NULL CHECK(sender_type IN ('CUSTOMER','AI','ADMIN')), content TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS whatsapp_pending_actions (
+      id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL REFERENCES whatsapp_conversations(id) ON DELETE CASCADE,
+      action_type TEXT NOT NULL CHECK(action_type IN ('ORDER_CONFIRMATION','COMPLAINT_CONFIRMATION')),
+      payload_json TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','CONFIRMED','CANCELLED','EXPIRED')),
+      expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_wa_msg_id ON whatsapp_messages(waha_message_id);
+    CREATE INDEX IF NOT EXISTS idx_wa_conv_phone ON whatsapp_conversations(phone);
+    CREATE INDEX IF NOT EXISTS idx_wa_pending_status ON whatsapp_pending_actions(status);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_wa_pending_idempotency
+      ON whatsapp_pending_actions(conversation_id, action_type, status)
+      WHERE status = 'PENDING';
+  `);
+
   const count = db.prepare('SELECT COUNT(*) AS count FROM menus').get().count;
   if (!count) {
     db.prepare('INSERT INTO branches (id,name) VALUES (?,?)').run('pusat', 'Cabang Pusat');

@@ -1,0 +1,36 @@
+services:
+  waha:
+    image: devlikeapro/waha:2026.10.1
+    container_name: sambal-joelid-waha
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - ${WAHA_ENV_FILE:-/opt/waha/.env}
+    environment:
+      TZ: Asia/Jakarta
+      WAHA_LOCAL_STORE_BASE_DIR: /app/.sessions
+      WAHA_PRINT_QR: "False"
+      WAHA_DASHBOARD_ENABLED: "True"
+      WHATSAPP_SWAGGER_ENABLED: "False"
+      WAHA_EVENTS_DOWNLOAD_MEDIA: "False"
+      WAHA_API_DOWNLOAD_MEDIA: "False"
+      WAHA_SESSION_CONFIG_IGNORE_STATUS: "True"
+      WAHA_SESSION_CONFIG_IGNORE_GROUPS: "True"
+      WAHA_SESSION_CONFIG_IGNORE_CHANNELS: "True"
+      WAHA_SESSION_CONFIG_IGNORE_BROADCAST: "True"
+      WHATSAPP_HOOK_URL: http://host.docker.internal:3001/api/v1/integrations/waha/webhook
+      WHATSAPP_HOOK_EVENTS: message
+      WHATSAPP_HOOK_RETRIES_POLICY: exponential
+      WHATSAPP_HOOK_RETRIES_DELAY_SECONDS: "2"
+      WHATSAPP_HOOK_RETRIES_ATTEMPTS: "5"
+    volumes:
+      - /var/lib/waha:/app/.sessions
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health',{headers:{'X-Api-Key':process.env.WAHA_API_KEY}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
