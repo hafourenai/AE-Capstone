@@ -115,6 +115,42 @@ ls -lh /var/backups/sambal-joelid</pre>
   <h2>11. Termux terpisah</h2>
   <div class="notice"><strong>Jangan mencampur konfigurasi.</strong> Proyek Sambal Joelid di VPS tidak memakai konfigurasi Termux. Saat kembali ke Telegram Personal AI di Termux, gunakan file <code>D:\bot_honey\telegram_personal_ai\.env</code>, bukan file <code>/var/www/sambal-joelid/.env</code>.</div>
 
+  <h2>12. Rencana pengembangan WAHA + AI</h2>
+  <div class="notice"><strong>Status:</strong> rencana, belum diimplementasikan. WAHA akan menjadi kanal WhatsApp tambahan; customer web dan dashboard admin yang ada tetap dipakai.</div>
+  <h3>Tujuan alur</h3>
+  <pre>Customer WhatsApp
+      ↓
+WAHA (Docker, hanya jaringan internal)
+      ↓ webhook masuk
+Sambal Joelid API + AI
+      ├─ balas percakapan pelanggan
+      ├─ ekstraksi pesanan / keluhan terstruktur
+      ├─ validasi katalog dan harga di backend
+      └─ SQLite + Socket.IO → dashboard admin</pre>
+  <h3>Lokasi komponen</h3>
+  <table><thead><tr><th>Komponen</th><th>Lokasi yang direncanakan</th><th>Catatan</th></tr></thead><tbody>
+    <tr><td>Webhook, AI orchestration, pengiriman pesan</td><td><code>apps/api/src/</code></td><td>Bagian dari repository Sambal Joelid.</td></tr>
+    <tr><td>Kontrak input, status, skema validasi</td><td><code>apps/api/src/</code> atau <code>packages/shared/</code></td><td>Dipakai agar pesan WA tidak mengubah aturan order/complaint.</td></tr>
+    <tr><td>WAHA runtime</td><td><code>/opt/waha</code> di VPS</td><td>Service terpisah; jangan clone ke dalam repository aplikasi.</td></tr>
+    <tr><td>WAHA session data</td><td><code>/var/lib/waha</code> di VPS</td><td>Persistent, permission terbatas, tidak masuk Git.</td></tr>
+    <tr><td>Dokumentasi operasional</td><td><code>docs/deployment-vps-vercel.html</code></td><td>Diperbarui setelah konfigurasi final.</td></tr>
+  </tbody></table>
+  <h3>Fase implementasi</h3>
+  <ol>
+    <li><strong>Keputusan dan keamanan.</strong> Tetapkan provider AI, nomor WhatsApp bisnis khusus, format pesan, batas eskalasi ke admin, serta kebijakan privasi. WAHA berbasis WhatsApp Web; gunakan sesuai ketentuan WhatsApp dan pahami risiko logout/pembatasan nomor.</li>
+    <li><strong>WAHA terisolasi.</strong> Pasang Docker khusus WAHA, gunakan image resmi <code>devlikeapro/waha</code>, persistent volume, health check, API key, dan binding hanya ke <code>127.0.0.1:3000</code>. Port 3000 tidak dibuka di UFW dan tidak diproxy ke publik.</li>
+    <li><strong>Webhook aman.</strong> Tambahkan endpoint WAHA di API dengan shared secret/signature, idempotency berdasarkan message ID, payload-size limit, allowlist event, dan log metadata tanpa isi pesan sensitif berlebihan.</li>
+    <li><strong>AI response.</strong> Tambahkan service provider AI dengan timeout, retry terbatas, rate limit per nomor, prompt kebijakan, dan fallback pesan aman bila AI/provider tidak tersedia.</li>
+    <li><strong>Order dan keluhan.</strong> AI hanya mengekstrak draft terstruktur. Backend tetap memverifikasi cabang, menu, kuantitas, harga, total, transisi status, lalu memakai service SQLite yang sama dengan form web. AI tidak boleh mengarang harga, mengakses catatan internal, atau mengonfirmasi transaksi yang gagal disimpan.</li>
+    <li><strong>Human handoff.</strong> Sediakan kata kunci seperti <code>admin</code>/<code>operator</code>, status percakapan, dan penanda agar AI berhenti membalas ketika admin mengambil alih.</li>
+    <li><strong>Dashboard.</strong> Tambahkan sumber kanal <code>WEB</code>/<code>WHATSAPP</code>, ringkasan percakapan yang aman, dan realtime event tanpa mengekspos pesan pelanggan kepada user tidak berwenang.</li>
+    <li><strong>Pengujian.</strong> Uji QR/session WAHA, webhook valid/tidak valid, deduplikasi, pesan biasa, draft order, keluhan, AI outage, restart container, restart API, serta event realtime dashboard.</li>
+    <li><strong>Operasional.</strong> Monitoring health WAHA/API, backup session sesuai kebutuhan, rotasi API key, prosedur reconnect QR, dan dokumentasi rollback.</li>
+  </ol>
+  <h3>Keputusan yang dibutuhkan sebelum coding</h3>
+  <ul><li>Provider AI: Gemini API, OpenAI API, atau provider lain.</li><li>Nomor WhatsApp khusus yang akan dipasangkan ke WAHA.</li><li>Bahasa, nada jawaban, jam operasional, dan kondisi wajib handoff ke admin.</li><li>Apakah order dari WhatsApp langsung dibuat setelah pelanggan mengonfirmasi ringkasan, atau selalu menunggu admin.</li></ul>
+  <div class="notice"><strong>Aturan utama:</strong> jangan menaruh token WAHA, credential AI, QR/session WAHA, atau secret webhook dalam repository atau frontend Vercel.</div>
+
   <footer>Diperbarui setelah konfigurasi domain dan HTTPS production berhasil. Simpan dokumen ini bersama repository; perbarui bila ada perubahan hosting, domain, atau arsitektur.</footer>
 </main>
 </body>
