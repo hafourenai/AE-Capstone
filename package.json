@@ -2,6 +2,9 @@
   "name": "sambal-joelid",
   "private": true,
   "version": "0.1.0",
+  "engines": {
+    "node": "22.x"
+  },
   "workspaces": ["apps/*"],
   "scripts": {
     "dev:api": "npm --workspace @sambal-joelid/api run dev",

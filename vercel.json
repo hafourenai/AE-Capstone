@@ -1,0 +1,5 @@
+{
+  "installCommand": "npm ci --workspace @sambal-joelid/web --include-workspace-root=false",
+  "buildCommand": "npm --workspace @sambal-joelid/web run build",
+  "outputDirectory": "apps/web/dist"
+}
