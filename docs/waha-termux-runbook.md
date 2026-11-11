@@ -26,7 +26,7 @@ sudo docker compose up -d
 sudo docker compose ps
 ```
 
-Isi `/opt/waha/.env` dengan key yang sama seperti `.env` API. Image dipin ke tag Docker `noweb-2026.10.1` dan engine `NOWEB` agar tidak bergantung pada browser/Puppeteer; update hanya setelah membaca release notes dan membuat backup `/var/lib/waha`.
+Isi `/opt/waha/.env` dengan key yang sama seperti `.env` API. Image dipin ke tag Docker `noweb-2026.10.1` dan engine `NOWEB` agar tidak bergantung pada browser/Puppeteer. `WAHA_NOWEB_WA_VERSION=auto-web` mengambil revisi protokol aktif saat startup untuk menghindari `Connection Failure` akibat client version yang usang. Update image hanya setelah membaca release notes dan membuat backup `/var/lib/waha`.
 
 Walaupun Swagger dinonaktifkan, isi juga `WHATSAPP_SWAGGER_USERNAME` dan `WHATSAPP_SWAGGER_PASSWORD` dengan nilai acak agar WAHA tidak menghasilkan credential baru di log setiap restart. Log production dipatok pada level `warn` agar data pairing tidak tercatat berlebihan.
 

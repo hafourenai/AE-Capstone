@@ -12,6 +12,7 @@ services:
     environment:
       TZ: Asia/Jakarta
       WHATSAPP_DEFAULT_ENGINE: NOWEB
+      WAHA_NOWEB_WA_VERSION: auto-web
       WAHA_LOG_LEVEL: warn
       WAHA_HTTP_LOG_LEVEL: warn
       WAHA_LOCAL_STORE_BASE_DIR: /app/.sessions
