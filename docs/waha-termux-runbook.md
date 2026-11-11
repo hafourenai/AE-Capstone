@@ -26,7 +26,7 @@ sudo docker compose up -d
 sudo docker compose ps
 ```
 
-Isi `/opt/waha/.env` dengan key yang sama seperti `.env` API. Image dipin ke `2026.10.1`; update hanya setelah membaca release notes dan membuat backup `/var/lib/waha`.
+Isi `/opt/waha/.env` dengan key yang sama seperti `.env` API. Image dipin ke tag Docker `latest-2026.10.1`; update hanya setelah membaca release notes dan membuat backup `/var/lib/waha`.
 
 Pastikan port tidak publik:
 

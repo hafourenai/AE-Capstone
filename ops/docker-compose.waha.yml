@@ -1,6 +1,6 @@
 services:
   waha:
-    image: devlikeapro/waha:2026.10.1
+    image: devlikeapro/waha:latest-2026.10.1
     container_name: sambal-joelid-waha
     restart: unless-stopped
     ports:
