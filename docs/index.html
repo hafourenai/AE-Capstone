@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Portal dokumentasi operasional Sambal Joelid.">
+  <title>Sambal Joelid — Operations Manual</title>
+  <link rel="stylesheet" href="docs.css"><script src="docs.js" defer></script>
+</head>
+<body data-page="home">
+  <header class="site-header">
+    <a class="brand" href="index.html"><span>SJ</span><strong>Operations Manual</strong></a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav id="site-nav"><a href="deployment-vps-vercel.html">Deployment</a><a href="waha-ai-whatsapp.html">WAHA + AI</a><a href="operations-runbook.html">Operasional</a></nav>
+  </header>
+  <main class="landing">
+    <section class="landing-hero">
+      <p class="kicker">SAMBAL JOELID / SYSTEM HANDBOOK</p>
+      <h1>Tiga jalur.<br>Satu operasi.</h1>
+      <p>Dokumentasi production untuk web, WhatsApp, dan model AI yang berjalan lintas Vercel, VPS, serta Termux.</p>
+    </section>
+    <section class="doc-index" aria-label="Daftar dokumentasi">
+      <a href="deployment-vps-vercel.html"><span>01</span><div><small>INFRASTRUCTURE</small><h2>Deployment</h2><p>VPS, Vercel, DNS Cloudflare, Nginx, environment.</p></div><b>→</b></a>
+      <a href="waha-ai-whatsapp.html"><span>02</span><div><small>MESSAGING</small><h2>WAHA + Qwen</h2><p>GOWS, webhook HMAC, tunnel statis, alur AI.</p></div><b>→</b></a>
+      <a href="operations-runbook.html"><span>03</span><div><small>RUNBOOK</small><h2>Operasional</h2><p>Backup, restart, monitoring, test, troubleshooting.</p></div><b>→</b></a>
+    </section>
+    <div class="status wide"><span></span><strong>Current topology</strong> — Vercel + Ubuntu VPS + WAHA GOWS + Qwen Termux.</div>
+  </main>
+  <footer class="site-footer"><span>Sambal Joelid / Internal Operations</span><span>Diperbarui 11 November 2026</span></footer>
+</body>
+</html>

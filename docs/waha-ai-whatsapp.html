@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Arsitektur dan deployment WAHA WhatsApp serta Qwen Termux Sambal Joelid.">
+  <title>WAHA + Qwen AI — Sambal Joelid Docs</title>
+  <link rel="stylesheet" href="docs.css"><script src="docs.js" defer></script>
+</head>
+<body data-page="waha">
+  <header class="site-header">
+    <a class="brand" href="index.html"><span>SJ</span><strong>Operations Manual</strong></a><button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav id="site-nav"><a href="deployment-vps-vercel.html" data-nav="deployment">Deployment</a><a href="waha-ai-whatsapp.html" data-nav="waha">WAHA + AI</a><a href="operations-runbook.html" data-nav="operations">Operasional</a></nav>
+  </header>
+  <main>
+    <section class="hero"><div><p class="kicker">DOC 02 / MESSAGING</p><h1>WhatsApp + Qwen AI</h1></div><p class="lede">WAHA GOWS di VPS, Qwen 2.5 di Termux, dan backend Express sebagai satu-satunya sumber kebenaran bisnis.</p></section>
+    <div class="status"><span></span><strong>End-to-end aktif</strong> — session GOWS berstatus WORKING.</div>
+    <div class="doc-layout">
+      <aside class="toc"><strong>Di halaman ini</strong><a href="#flow">Alur</a><a href="#waha">WAHA</a><a href="#qwen">Qwen Termux</a><a href="#webhook">Webhook</a><a href="#business">Aturan bisnis</a><a href="#dashboard">Dashboard</a></aside>
+      <article>
+        <section id="flow"><p class="section-no">01</p><h2>Topologi aktif</h2>
+          <pre><code>Pelanggan WhatsApp
+  ↓
+WAHA GOWS / Docker / VPS :3000 loopback
+  ↓ HTTPS webhook + HMAC SHA-512
+Express API / VPS :3001
+  ├─ deduplikasi &amp; rate limit
+  ├─ katalog, harga, order, complaint
+  ├─ SQLite + Socket.IO
+  └─ Qwen via https://qwen.hontalk.my.id/v1
+                         ↓
+                  Cloudflare Tunnel
+                         ↓
+                  llama-server / Termux</code></pre>
+        </section>
+
+        <section id="waha"><p class="section-no">02</p><h2>WAHA GOWS</h2>
+          <div class="cards two"><div class="card"><span class="tag">RUNTIME</span><h3>Docker image</h3><code>devlikeapro/waha:gows-2026.10.1</code><p>GOWS dipakai setelah WEBJS dan NOWEB mengalami kegagalan pairing/protokol.</p></div><div class="card"><span class="tag">PERSISTENCE</span><h3>Session storage</h3><code>/var/lib/waha</code><p>Tidak boleh dihapus saat restart atau rollback.</p></div></div>
+          <pre><code>cd /opt/waha
+docker compose ps
+docker compose logs --tail=50 waha
+
+curl -fsS http://127.0.0.1:3000/api/sessions/sambal-joelid \
+  -H "X-Api-Key: $WAHA_KEY_VALUE"</code></pre>
+          <div class="callout"><strong>Network boundary:</strong> port WAHA dipublish hanya pada <code>127.0.0.1:3000</code>. Dashboard diakses melalui SSH tunnel, bukan domain publik.</div>
+        </section>
+
+        <section id="qwen"><p class="section-no">03</p><h2>Qwen di Termux</h2>
+          <pre><code>./build/bin/llama-server \
+  --model "$HOME/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf" \
+  --alias qwen2.5-1.5b-instruct \
+  --host 127.0.0.1 --port 8080 \
+  --ctx-size 2048 --parallel 1 --threads 4 \
+  --n-predict 300 --api-key '&lt;AI_API_KEY&gt;' --no-ui</code></pre>
+          <ul class="checklist"><li><code>termux-wake-lock</code> aktif.</li><li>Battery optimization Termux dinonaktifkan.</li><li><code>cloudflared tunnel run --token &lt;token&gt;</code> berjalan terpisah.</li><li>Hostname statis: <code>qwen.hontalk.my.id</code>.</li><li>Backend timeout 90 detik dan concurrency satu.</li></ul>
+          <div class="callout warn"><strong>Tiga secret berbeda:</strong> tunnel token menghubungkan cloudflared; AI API key melindungi llama-server; WAHA API key melindungi API WAHA. Jangan saling menggunakan ulang.</div>
+        </section>
+
+        <section id="webhook"><p class="section-no">04</p><h2>Webhook aman</h2>
+          <p>WAHA mengirim ke endpoint HTTPS karena firewall VPS mengisolasi bridge Docker dari port aplikasi.</p>
+          <pre><code>POST https://api.joelid.hontalk.my.id/api/v1/integrations/waha/webhook
+
+X-Webhook-Hmac: &lt;sha512 raw body&gt;
+X-Webhook-Hmac-Algorithm: sha512</code></pre>
+          <ul class="checklist"><li>Raw body diverifikasi dengan timing-safe comparison.</li><li>Session wajib <code>sambal-joelid</code>.</li><li>Grup, channel, status, media, dan pesan <code>fromMe</code> diabaikan.</li><li>Message ID unik mencegah transaksi ganda.</li><li>Chat ID GOWS <code>@lid</code> disimpan untuk balasan; nomor alternatif dipakai sebagai data customer.</li></ul>
+        </section>
+
+        <section id="business"><p class="section-no">05</p><h2>AI bukan sumber kebenaran</h2>
+          <div class="table-wrap"><table><thead><tr><th>Intent</th><th>Perilaku backend</th></tr></thead><tbody>
+            <tr><td><code>GENERAL_QUESTION</code></td><td>Qwen menjawab dengan konteks menu dan cabang aktif.</td></tr>
+            <tr><td><code>ORDER</code></td><td>Backend memvalidasi menu/cabang, menghitung harga, meminta <code>YA/BATAL</code>, lalu commit.</td></tr>
+            <tr><td><code>COMPLAINT</code></td><td>Pesan asli menjadi fallback deskripsi; selalu meminta <code>YA/BATAL</code> sebelum commit.</td></tr>
+            <tr><td><code>HANDOFF</code></td><td>State menjadi <code>WAITING_ADMIN</code>; AI berhenti.</td></tr>
+          </tbody></table></div>
+          <p>Output Qwen dibatasi JSON Schema. Jika model kecil tetap menghasilkan output tidak lengkap, backend memakai safe response sebagai lapisan darurat—bukan respons normal.</p>
+        </section>
+
+        <section id="dashboard"><p class="section-no">06</p><h2>Dashboard admin</h2>
+          <ul class="checklist"><li>Order/keluhan memiliki badge <code>WEB</code> atau <code>WHATSAPP</code>.</li><li>Tab WhatsApp menampilkan percakapan dan state handoff.</li><li>Admin dapat membalas melalui WAHA menggunakan chat ID tersimpan.</li><li>QR, API key, AI key, dan catatan internal tidak pernah ditampilkan kepada pelanggan.</li></ul>
+        </section>
+        <nav class="next-doc"><span>Berikutnya</span><a href="operations-runbook.html">Operasional &amp; troubleshooting →</a></nav>
+      </article>
+    </div>
+  </main>
+  <footer class="site-footer"><span>Sambal Joelid / Internal Operations</span><span>WAHA GOWS + Qwen 2.5</span></footer>
+</body>
+</html>
