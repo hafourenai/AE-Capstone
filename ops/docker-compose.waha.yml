@@ -1,6 +1,6 @@
 services:
   waha:
-    image: devlikeapro/waha:noweb-2026.10.1
+    image: devlikeapro/waha:gows-2026.10.1
     container_name: sambal-joelid-waha
     restart: unless-stopped
     ports:
@@ -11,8 +11,10 @@ services:
       - ${WAHA_ENV_FILE:-/opt/waha/.env}
     environment:
       TZ: Asia/Jakarta
-      WHATSAPP_DEFAULT_ENGINE: NOWEB
-      WAHA_NOWEB_WA_VERSION: auto-web
+      WHATSAPP_DEFAULT_ENGINE: GOWS
+      WAHA_GOWS_DEVICE_REQUIRE_FULL_SYNC: "false"
+      WAHA_GOWS_DEVICE_HISTORY_SYNC_RECENT_SYNC_DAYS_LIMIT: "30"
+      WAHA_GOWS_DEVICE_HISTORY_SYNC_INITIAL_SYNC_MAX_MESSAGES_PER_CHAT: "100"
       WAHA_LOG_LEVEL: warn
       WAHA_HTTP_LOG_LEVEL: warn
       WAHA_LOCAL_STORE_BASE_DIR: /app/.sessions
