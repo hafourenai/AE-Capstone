@@ -1,6 +1,6 @@
 services:
   waha:
-    image: devlikeapro/waha:latest-2026.10.1
+    image: devlikeapro/waha:noweb-2026.10.1
     container_name: sambal-joelid-waha
     restart: unless-stopped
     ports:
@@ -11,6 +11,7 @@ services:
       - ${WAHA_ENV_FILE:-/opt/waha/.env}
     environment:
       TZ: Asia/Jakarta
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
       WAHA_LOCAL_STORE_BASE_DIR: /app/.sessions
       WAHA_PRINT_QR: "False"
       WAHA_DASHBOARD_ENABLED: "True"
