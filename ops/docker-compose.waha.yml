@@ -5,8 +5,6 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:3000:3000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     env_file:
       - ${WAHA_ENV_FILE:-/opt/waha/.env}
     environment:
@@ -27,7 +25,7 @@ services:
       WAHA_SESSION_CONFIG_IGNORE_GROUPS: "True"
       WAHA_SESSION_CONFIG_IGNORE_CHANNELS: "True"
       WAHA_SESSION_CONFIG_IGNORE_BROADCAST: "True"
-      WHATSAPP_HOOK_URL: http://host.docker.internal:3001/api/v1/integrations/waha/webhook
+      WHATSAPP_HOOK_URL: https://api.joelid.hontalk.my.id/api/v1/integrations/waha/webhook
       WHATSAPP_HOOK_EVENTS: message
       WHATSAPP_HOOK_RETRIES_POLICY: exponential
       WHATSAPP_HOOK_RETRIES_DELAY_SECONDS: "2"

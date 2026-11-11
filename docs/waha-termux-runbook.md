@@ -109,6 +109,8 @@ curl -fsS "$AI_BASE_URL/models" -H "Authorization: Bearer $AI_API_KEY"
 8. Matikan tunnel Termux sementara; pastikan pelanggan menerima fallback dan percakapan masuk `WAITING_ADMIN`.
 9. Kirim ulang payload webhook yang sama; pastikan transaksi tidak terduplikasi.
 
+Webhook WAHA menggunakan endpoint HTTPS publik API karena firewall VPS mengisolasi bridge Docker dari port aplikasi. Endpoint tetap dilindungi HMAC SHA-512, validasi session/event, batas payload, dan deduplikasi message ID; port WAHA sendiri tetap hanya tersedia pada loopback VPS.
+
 ## 7. Operasi dan rollback
 
 ```bash
