@@ -60,7 +60,8 @@ const orderInput = z.object({ customerName: z.string().trim().min(2).max(100), c
 const complaintInput = z.object({ customerName: z.string().trim().min(2).max(100), customerPhone: phone, branchId: z.string().optional(), category: z.enum(['KUALITAS_MAKANAN','PELAYANAN','KEBERSIHAN','PESANAN','LAINNYA']).optional(), description: z.string().trim().min(10).max(2000) });
 
 function normalizePhoneNumber(phone) {
-  let normalized = phone.replace(/\D/g, '');
+  const localPart = String(phone).split('@')[0].split(':')[0];
+  let normalized = localPart.replace(/\D/g, '');
   if (!normalized.startsWith('62') && normalized.startsWith('0')) normalized = '62' + normalized.slice(1);
   if (!normalized.startsWith('62')) normalized = '62' + normalized;
   return normalized;
@@ -87,11 +88,14 @@ const ref = (prefix) => `${prefix}-${new Date().toISOString().slice(0,10).replac
 
 async function handleIncomingMessage(wahaMessage) {
   // Filter: hanya personal chat, bukan group (@g.us), bukan status, bukan milik sendiri
-  const chatId = wahaMessage.from || '';
+  const rawChatId = wahaMessage.from || '';
+  const [chatLocalPart, chatDomain] = rawChatId.split('@');
+  const chatId = chatDomain ? `${chatLocalPart.split(':')[0]}@${chatDomain}` : rawChatId;
   if (wahaMessage.fromMe || chatId.endsWith('@g.us') || chatId.endsWith('@newsletter') || chatId.endsWith('@broadcast')) return null;
   if (!wahaMessage.body || wahaMessage.body.trim().length === 0 || wahaMessage.hasMedia) return null;
 
-  const normalizedPhone = normalizePhoneNumber(wahaMessage.from);
+  const senderAlt = wahaMessage._data?.Info?.SenderAlt;
+  const normalizedPhone = normalizePhoneNumber(senderAlt || rawChatId);
   const messageContent = wahaMessage.body.trim();
 
   // Deduplikasi: cek apakah messageId sudah pernah diproses
@@ -107,10 +111,12 @@ async function handleIncomingMessage(wahaMessage) {
   }
 
   // Buat atau update conversation
-  let conv = db.prepare('SELECT id FROM whatsapp_conversations WHERE phone = ?').get(normalizedPhone);
+  let conv = db.prepare('SELECT id FROM whatsapp_conversations WHERE chat_id = ? OR phone = ?').get(chatId, normalizedPhone);
   if (!conv) {
-    const result = db.prepare('INSERT INTO whatsapp_conversations(phone, state, created_at, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)').run(normalizedPhone, 'AI_ACTIVE');
+    const result = db.prepare('INSERT INTO whatsapp_conversations(phone, chat_id, state, created_at, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)').run(normalizedPhone, chatId, 'AI_ACTIVE');
     conv = { id: result.lastInsertRowid };
+  } else {
+    db.prepare('UPDATE whatsapp_conversations SET chat_id = ?, phone = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(chatId, normalizedPhone, conv.id);
   }
 
   // Simpan pesan inbound
@@ -119,10 +125,10 @@ async function handleIncomingMessage(wahaMessage) {
   // Update timestamp percakapan
   db.prepare('UPDATE whatsapp_conversations SET last_message_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(conv.id);
 
-  return { conversationId: conv.id, phone: normalizedPhone, message: messageContent };
+  return { conversationId: conv.id, phone: normalizedPhone, chatId, message: messageContent };
 }
 
-async function processMessage(conversationId, phone, message) {
+async function processMessage(conversationId, phone, chatId, message) {
   const conv = db.prepare('SELECT state FROM whatsapp_conversations WHERE id = ?').get(conversationId);
 
   // Jika state WAITING_ADMIN atau ADMIN_ACTIVE, jangan proses dengan AI
@@ -152,14 +158,14 @@ async function processMessage(conversationId, phone, message) {
           response = `✅ Keluhan Anda telah kami terima.\n\nNomor Referensi: *${complaint.reference}*\n\nTim kami akan menghubungi Anda segera untuk penyelesaian.`;
         }
 
-        await waha.sendMessage(phone, response);
+        await waha.sendMessage(chatId, response);
         db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', response);
         return;
       } else if (answer === 'BATAL' || answer === 'CANCEL' || answer === 'NO') {
         // Batalkan
         bridge.updatePendingActionStatus(pending.id, 'CANCELLED');
         const response = 'Baik, permintaan Anda dibatalkan. Ada yang bisa kami bantu lagi?';
-        await waha.sendMessage(phone, response);
+        await waha.sendMessage(chatId, response);
         db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', response);
         return;
       }
@@ -176,7 +182,7 @@ async function processMessage(conversationId, phone, message) {
     if (aiResult.intent === 'HANDOFF' || handoffKeywords.some(kw => message.toLowerCase().includes(kw))) {
       db.prepare('UPDATE whatsapp_conversations SET state = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('WAITING_ADMIN', conversationId);
       const response = '👋 Mohon tunggu, kami sedang menghubungkan Anda dengan tim admin kami...';
-      await waha.sendMessage(phone, response);
+      await waha.sendMessage(chatId, response);
       db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(conversationId, `outbound-${Date.now()}`, 'OUTBOUND', 'AI', response);
       io.to('admins').emit('whatsapp:conversation-updated', { conversationId, state: 'WAITING_ADMIN' });
       return;
@@ -218,14 +224,14 @@ async function processMessage(conversationId, phone, message) {
     }
 
     // Kirim response AI
-    await waha.sendMessage(phone, response);
+    await waha.sendMessage(chatId, response);
     db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(conversationId, `outbound-${Date.now()}`, 'OUTBOUND', 'AI', response);
   } catch (error) {
     console.error('[AI] Error:', error.message);
     const fallback = `⏳ Mohon maaf, sistem kami sedang sibuk. Pesan Anda telah kami teruskan ke admin untuk ditangani.`;
     db.prepare('UPDATE whatsapp_conversations SET state = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('WAITING_ADMIN', conversationId);
     try {
-      await waha.sendMessage(phone, fallback);
+      await waha.sendMessage(chatId, fallback);
       db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', fallback);
     } catch (sendError) {
       console.error('[WAHA] Fallback gagal dikirim:', sendError.message);
@@ -286,7 +292,7 @@ api.post('/integrations/waha/webhook', async (req, res) => {
       const parsed = await handleIncomingMessage(wahaMessage.payload);
       if (parsed) {
         // Process async, don't wait
-        processMessage(parsed.conversationId, parsed.phone, parsed.message).catch(err => {
+        processMessage(parsed.conversationId, parsed.phone, parsed.chatId, parsed.message).catch(err => {
           console.error('[Message Processing Error]', err);
         });
       }
@@ -335,11 +341,11 @@ api.get('/admin/whatsapp/conversations/:id/messages', auth, (req, res) => {
 api.post('/admin/whatsapp/conversations/:id/messages', auth, validate(z.object({ content: z.string().trim().min(1).max(2000) })), async (req, res) => {
   try {
     const { content } = req.body;
-    const conv = db.prepare('SELECT phone FROM whatsapp_conversations WHERE id = ?').get(req.params.id);
+    const conv = db.prepare('SELECT phone, chat_id FROM whatsapp_conversations WHERE id = ?').get(req.params.id);
     if (!conv) return res.sendStatus(404);
 
     // Kirim ke WAHA
-    await waha.sendMessage(conv.phone, content);
+    await waha.sendMessage(conv.chat_id || conv.phone, content);
 
     // Simpan message sebagai ADMIN
     db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(req.params.id, `admin-${crypto.randomUUID()}`, 'OUTBOUND', 'ADMIN', content);

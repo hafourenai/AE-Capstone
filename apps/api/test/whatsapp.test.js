@@ -23,6 +23,8 @@ test('migration adds WhatsApp tables and WEB source defaults', (t) => {
   assert.ok(tables.includes('whatsapp_conversations'));
   assert.ok(tables.includes('whatsapp_messages'));
   assert.ok(tables.includes('whatsapp_pending_actions'));
+  const conversationColumns = db.prepare('PRAGMA table_info(whatsapp_conversations)').all().map(row => row.name);
+  assert.ok(conversationColumns.includes('chat_id'));
 
   db.prepare("INSERT INTO customer_complaints(reference_number,customer_name,customer_phone,description,status) VALUES ('CMP-TEST','Test','628123456789','Keluhan pengujian','NEW')").run();
   assert.equal(db.prepare("SELECT source FROM customer_complaints WHERE reference_number='CMP-TEST'").get().source, 'WEB');
@@ -61,4 +63,18 @@ test('WAHA client sends X-Api-Key, session, and normalized chat id', async (t) =
     chatId: '628123456789@c.us',
     text: 'Halo',
   });
+});
+
+test('WAHA client preserves LID replies and removes device suffix', async (t) => {
+  const originalFetch = globalThis.fetch;
+  let body;
+  globalThis.fetch = async (_url, options) => {
+    body = JSON.parse(options.body);
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const client = new WAHAClient('http://127.0.0.1:3000', 'secret', 'sambal-joelid');
+  await client.sendMessage('123456:2@lid', 'Halo');
+  assert.equal(body.chatId, '123456@lid');
 });

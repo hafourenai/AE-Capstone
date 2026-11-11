@@ -6,6 +6,9 @@ export class WAHAClient {
   }
 
   async sendMessage(chatId, text) {
+    const [localPart, domain] = chatId.includes('@') ? chatId.split('@') : [chatId, 'c.us'];
+    const normalizedDomain = domain === 's.whatsapp.net' ? 'c.us' : domain;
+    const normalizedChatId = `${localPart.split(':')[0]}@${normalizedDomain}`;
     const response = await fetch(`${this.baseUrl}/api/sendText`, {
       method: 'POST',
       headers: {
@@ -14,7 +17,7 @@ export class WAHAClient {
       },
       body: JSON.stringify({
         session: this.session,
-        chatId: chatId.includes('@') ? chatId : `${chatId}@c.us`,
+        chatId: normalizedChatId,
         text,
       }),
     });

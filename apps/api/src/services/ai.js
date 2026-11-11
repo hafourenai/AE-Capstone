@@ -95,6 +95,7 @@ Jangan menentukan harga akhir order (backend yang akan kalkulasi).`;
             ],
             temperature: 0.3,
             max_tokens: 250,
+            response_format: { type: 'json_object' },
           }),
           signal: controller.signal,
         });

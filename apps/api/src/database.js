@@ -50,7 +50,7 @@ export function openDatabase(filename) {
   // Tabel WhatsApp baru
   db.exec(`
     CREATE TABLE IF NOT EXISTS whatsapp_conversations (
-      id INTEGER PRIMARY KEY, phone TEXT NOT NULL UNIQUE, customer_name TEXT,
+      id INTEGER PRIMARY KEY, phone TEXT NOT NULL UNIQUE, chat_id TEXT, customer_name TEXT,
       state TEXT NOT NULL DEFAULT 'AI_ACTIVE' CHECK(state IN ('AI_ACTIVE','WAITING_ADMIN','ADMIN_ACTIVE')),
       last_message_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -73,6 +73,12 @@ export function openDatabase(filename) {
       ON whatsapp_pending_actions(conversation_id, action_type, status)
       WHERE status = 'PENDING';
   `);
+
+  const conversationColumns = db.prepare("PRAGMA table_info(whatsapp_conversations)").all();
+  if (!conversationColumns.some(col => col.name === 'chat_id')) {
+    db.exec('ALTER TABLE whatsapp_conversations ADD COLUMN chat_id TEXT');
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_wa_conv_chat_id ON whatsapp_conversations(chat_id)');
 
   const count = db.prepare('SELECT COUNT(*) AS count FROM menus').get().count;
   if (!count) {
