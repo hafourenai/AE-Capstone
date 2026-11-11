@@ -15,7 +15,7 @@
     <section class="hero"><div><p class="kicker">DOC 02 / MESSAGING</p><h1>WhatsApp + Qwen AI</h1></div><p class="lede">WAHA GOWS di VPS, Qwen 2.5 di Termux, dan backend Express sebagai satu-satunya sumber kebenaran bisnis.</p></section>
     <div class="status"><span></span><strong>End-to-end aktif</strong> — session GOWS berstatus WORKING.</div>
     <div class="doc-layout">
-      <aside class="toc"><strong>Di halaman ini</strong><a href="#flow">Alur</a><a href="#waha">WAHA</a><a href="#qwen">Qwen Termux</a><a href="#webhook">Webhook</a><a href="#business">Aturan bisnis</a><a href="#dashboard">Dashboard</a></aside>
+      <aside class="toc"><strong>Di halaman ini</strong><a href="#flow">Alur</a><a href="#waha">WAHA</a><a href="#dashboard-waha">Akses Dashboard</a><a href="#qwen">Qwen Termux</a><a href="#webhook">Webhook</a><a href="#business">Aturan bisnis</a><a href="#dashboard">Dashboard</a></aside>
       <article>
         <section id="flow"><p class="section-no">01</p><h2>Topologi aktif</h2>
           <pre><code>Pelanggan WhatsApp
@@ -44,7 +44,33 @@ curl -fsS http://127.0.0.1:3000/api/sessions/sambal-joelid \
           <div class="callout"><strong>Network boundary:</strong> port WAHA dipublish hanya pada <code>127.0.0.1:3000</code>. Dashboard diakses melalui SSH tunnel, bukan domain publik.</div>
         </section>
 
-        <section id="qwen"><p class="section-no">03</p><h2>Qwen di Termux</h2>
+        <section id="dashboard-waha"><p class="section-no">03</p><h2>Cara Akses Dashboard WAHA (Swagger &amp; Web UI)</h2>
+          <p>Karena port <code>3000</code> di-bind hanya ke <code>127.0.0.1</code> (loopback) demi keamanan, dashboard tidak dapat diakses langsung via IP publik. Gunakan <strong>SSH Local Port Forwarding</strong> dari terminal laptop/PC Anda:</p>
+          
+          <div class="cards two">
+            <div class="card">
+              <span class="tag">METODE 1: USER SAMBAL</span>
+              <pre><code>ssh -p 20231 -N -L 3000:127.0.0.1:3000 sambal@IP_VPS</code></pre>
+            </div>
+            <div class="card">
+              <span class="tag">METODE 2: USER ROOT</span>
+              <pre><code>ssh -p 20231 -N -L 3000:127.0.0.1:3000 root@IP_VPS</code></pre>
+            </div>
+          </div>
+
+          <p><em>(Catatan: Opsi <code>-N</code> menjaga koneksi tunnel tetap terbuka tanpa membuka shell interaktif baru).</em></p>
+
+          <h3>Langkah membuka di browser:</h3>
+          <ol class="steps">
+            <li>Biarkan perintah SSH di atas tetap berjalan di terminal Anda.</li>
+            <li>Buka browser lokal (Chrome/Edge/Firefox) dan tuju ke: <code>http://localhost:3000/dashboard</code> atau <code>http://localhost:3000</code>.</li>
+            <li>Jika diminta API Key, masukkan nilai <code>WAHA_API_KEY</code> yang ada di <code>/opt/waha/.env</code> VPS.</li>
+            <li>Anda dapat memantau status session <code>sambal-joelid</code> (status: <strong>WORKING</strong>), melihat QR code jika pairing ulang, memeriksa riwayat screenshot browser engine, dan membaca dokumentasi OpenAPI / Swagger di <code>http://localhost:3000/api/docs</code>.</li>
+          </ol>
+          <div class="callout warn"><strong>Peringatan Keamanan:</strong> Jangan pernah membuka port 3000 ke 0.0.0.0 atau membuat reverse proxy publik tanpa autentikasi ketat, karena dashboard ini memiliki hak akses penuh untuk membaca dan mengirim pesan WhatsApp.</div>
+        </section>
+
+        <section id="qwen"><p class="section-no">04</p><h2>Qwen di Termux</h2>
           <pre><code>./build/bin/llama-server \
   --model "$HOME/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf" \
   --alias qwen2.5-1.5b-instruct \
@@ -55,7 +81,7 @@ curl -fsS http://127.0.0.1:3000/api/sessions/sambal-joelid \
           <div class="callout warn"><strong>Tiga secret berbeda:</strong> tunnel token menghubungkan cloudflared; AI API key melindungi llama-server; WAHA API key melindungi API WAHA. Jangan saling menggunakan ulang.</div>
         </section>
 
-        <section id="webhook"><p class="section-no">04</p><h2>Webhook aman</h2>
+        <section id="webhook"><p class="section-no">05</p><h2>Webhook aman</h2>
           <p>WAHA mengirim ke endpoint HTTPS karena firewall VPS mengisolasi bridge Docker dari port aplikasi.</p>
           <pre><code>POST https://api.joelid.hontalk.my.id/api/v1/integrations/waha/webhook
 
@@ -64,7 +90,7 @@ X-Webhook-Hmac-Algorithm: sha512</code></pre>
           <ul class="checklist"><li>Raw body diverifikasi dengan timing-safe comparison.</li><li>Session wajib <code>sambal-joelid</code>.</li><li>Grup, channel, status, media, dan pesan <code>fromMe</code> diabaikan.</li><li>Message ID unik mencegah transaksi ganda.</li><li>Chat ID GOWS <code>@lid</code> disimpan untuk balasan; nomor alternatif dipakai sebagai data customer.</li></ul>
         </section>
 
-        <section id="business"><p class="section-no">05</p><h2>AI bukan sumber kebenaran</h2>
+        <section id="business"><p class="section-no">06</p><h2>AI bukan sumber kebenaran</h2>
           <div class="table-wrap"><table><thead><tr><th>Intent</th><th>Perilaku backend</th></tr></thead><tbody>
             <tr><td><code>GENERAL_QUESTION</code></td><td>Qwen menjawab dengan konteks menu dan cabang aktif.</td></tr>
             <tr><td><code>ORDER</code></td><td>Backend memvalidasi menu/cabang, menghitung harga, meminta <code>YA/BATAL</code>, lalu commit.</td></tr>
@@ -74,7 +100,7 @@ X-Webhook-Hmac-Algorithm: sha512</code></pre>
           <p>Output Qwen dibatasi JSON Schema. Jika model kecil tetap menghasilkan output tidak lengkap, backend memakai safe response sebagai lapisan darurat—bukan respons normal.</p>
         </section>
 
-        <section id="dashboard"><p class="section-no">06</p><h2>Dashboard admin</h2>
+        <section id="dashboard"><p class="section-no">07</p><h2>Dashboard admin</h2>
           <ul class="checklist"><li>Order/keluhan memiliki badge <code>WEB</code> atau <code>WHATSAPP</code>.</li><li>Tab WhatsApp menampilkan percakapan dan state handoff.</li><li>Admin dapat membalas melalui WAHA menggunakan chat ID tersimpan.</li><li>QR, API key, AI key, dan catatan internal tidak pernah ditampilkan kepada pelanggan.</li></ul>
         </section>
         <nav class="next-doc"><span>Berikutnya</span><a href="operations-runbook.html">Operasional &amp; troubleshooting →</a></nav>

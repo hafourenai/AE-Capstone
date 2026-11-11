@@ -13,7 +13,7 @@
     <div class="doc-layout">
       <aside class="toc"><strong>Di halaman ini</strong><a href="#health">Health</a><a href="#backup">Backup</a><a href="#restart">Restart</a><a href="#acceptance">Acceptance test</a><a href="#errors">Troubleshooting</a><a href="#security">Security</a></aside>
       <article>
-        <section id="health"><p class="section-no">01</p><h2>Health harian</h2>
+        <section id="health"><p class="section-no">01</p><h2>Health harian &amp; Akses Dashboard</h2>
           <pre><code>systemctl is-active sambal-joelid-api
 curl -fsS https://api.joelid.hontalk.my.id/api/v1/health
 
@@ -24,6 +24,14 @@ docker compose logs --tail=30 waha
 curl -fsS https://qwen.hontalk.my.id/v1/models \
   -H "Authorization: Bearer $AI_API_KEY"</code></pre>
           <div class="callout"><strong>Normal:</strong> API <code>{"ok":true}</code>, WAHA <code>healthy</code> dan session <code>WORKING</code>, Qwen menampilkan alias model.</div>
+
+          <h3>Membuka Dashboard WAHA dari Komputer Lokal:</h3>
+          <p>Karena port 3000 hanya dibuka di loopback VPS (127.0.0.1:3000), buka terminal komputer lokal Anda dan jalankan SSH Tunnel:</p>
+          <pre><code># Dari terminal laptop / PC lokal Anda:
+ssh -p 20231 -N -L 3000:127.0.0.1:3000 sambal@IP_VPS
+
+# Buka browser lokal:
+# http://localhost:3000/dashboard atau http://localhost:3000/api/docs</code></pre>
         </section>
 
         <section id="backup"><p class="section-no">02</p><h2>Backup</h2>
