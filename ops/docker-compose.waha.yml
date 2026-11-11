@@ -12,6 +12,8 @@ services:
     environment:
       TZ: Asia/Jakarta
       WHATSAPP_DEFAULT_ENGINE: NOWEB
+      WAHA_LOG_LEVEL: warn
+      WAHA_HTTP_LOG_LEVEL: warn
       WAHA_LOCAL_STORE_BASE_DIR: /app/.sessions
       WAHA_PRINT_QR: "False"
       WAHA_DASHBOARD_ENABLED: "True"
