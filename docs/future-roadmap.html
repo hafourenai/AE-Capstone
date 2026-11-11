@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Roadmap dan rencana arsitektur pengembangan Sambal Joelid berikutnya.">
+  <title>Roadmap Pengembangan — Sambal Joelid Docs</title>
+  <link rel="stylesheet" href="docs.css">
+  <script src="docs.js" defer></script>
+</head>
+<body data-page="roadmap">
+  <header class="site-header">
+    <a class="brand" href="index.html"><span>SJ</span><strong>Operations Manual</strong></a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav id="site-nav" aria-label="Dokumentasi utama">
+      <a href="deployment-vps-vercel.html" data-nav="deployment">Deployment</a>
+      <a href="waha-ai-whatsapp.html" data-nav="waha">WAHA + AI</a>
+      <a href="operations-runbook.html" data-nav="operations">Operasional</a>
+      <a href="future-roadmap.html" data-nav="roadmap">Roadmap</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <p class="kicker">DOC 04 / FUTURE ROADMAP</p>
+        <h1>Pengembangan Tahap Lanjutan</h1>
+      </div>
+      <p class="lede">Panduan teknis dan acuan arsitektur untuk skala bisnis, otomatisasi operasional, multi-cabang, dan upgrade AI berikutnya.</p>
+    </section>
+
+    <div class="status"><span></span><strong>Status: Siap Diimplementasikan</strong> — Fondasi WhatsApp &amp; Core Engine telah stabil di fase pilot.</div>
+
+    <div class="doc-layout">
+      <aside class="toc" aria-label="Daftar isi">
+        <strong>Di halaman ini</strong>
+        <a href="#priorities">Prioritas Utama</a>
+        <a href="#payment-gateway">1. Payment Gateway</a>
+        <a href="#branch-inventory">2. Stok &amp; Cabang</a>
+        <a href="#ai-enhancements">3. Upgrade AI (RAG &amp; Tool)</a>
+        <a href="#push-notifications">4. Notifikasi WhatsApp</a>
+        <a href="#security-scale">5. Ketahanan &amp; Scale</a>
+        <a href="#action-plan">Matriks Rencana Kerja</a>
+      </aside>
+
+      <article>
+        <section id="priorities">
+          <p class="section-no">01</p>
+          <h2>Prioritas Pengembangan</h2>
+          <p>Setelah integrasi WhatsApp pilot berhasil diverifikasi end-to-end, fokus sistem berpindah dari <em>konektivitas dasar</em> menuju <em>efisiensi transaksi dan otomatisasi menyeluruh</em>:</p>
+          <div class="cards three">
+            <div class="card">
+              <span class="tag">TRANSAKSI OTOMATIS</span>
+              <h3>Payment Gateway</h3>
+              <p>QRIS dinamis via WhatsApp agar konfirmasi bayar instan tanpa cek mutasi manual admin.</p>
+            </div>
+            <div class="card">
+              <span class="tag">OPERASIONAL REALTIME</span>
+              <h3>Stok &amp; Cabang</h3>
+              <p>Sinkronisasi ketersediaan menu per cabang agar AI tidak menerima pesanan menu yang habis.</p>
+            </div>
+            <div class="card">
+              <span class="tag">AI LEBIH CERDAS</span>
+              <h3>RAG &amp; Tool Calling</h3>
+              <p>Basis pengetahuan dinamis (knowledge base menu, promo, jam buka) &amp; cek status order live.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="payment-gateway">
+          <p class="section-no">02</p>
+          <h2>1. Integrasi Payment Gateway (QRIS Otomatis)</h2>
+          <p>Saat ini order WhatsApp berstatus <code>NEW</code> dan memerlukan konfirmasi pembayaran manual oleh kasir/admin. Tahap berikutnya adalah penerbitan QRIS instan.</p>
+          
+          <div class="cards two">
+            <div class="card">
+              <span class="tag">PROVIDER PILIHAN</span>
+              <h3>Midtrans / Xendit / Tripay</h3>
+              <p>Mendukung webhook notifikasi pembayaran dan pembuatan QRIS / Virtual Account dinamis secara realtime.</p>
+            </div>
+            <div class="card">
+              <span class="tag">ALUR PENGGUNA</span>
+              <h3>Direct-in-Chat Checkout</h3>
+              <p>Setelah pelanggan balas <code>YA</code>, bot langsung mengirim gambar QRIS dinamis dan link pembayaran.</p>
+            </div>
+          </div>
+
+          <h3>Spesifikasi Alur Teknis:</h3>
+          <pre><code>Pelanggan konfirmasi "YA"
+  ↓
+Express memanggil Payment Gateway API (Create QRIS Transaction)
+  ↓
+WAHA mengirim gambar QRIS + batas waktu bayar (misal 15 menit)
+  ↓
+Pelanggan scan QRIS &amp; bayar via m-Banking/E-Wallet
+  ↓
+Webhook Payment Gateway → Express /api/v1/integrations/payment/webhook
+  ↓
+Order status berubah: PAID → Notifikasi otomatis ke dapur &amp; pelanggan</code></pre>
+
+          <div class="callout">
+            <strong>Keuntungan:</strong> Kasir tidak perlu cek mutasi rekening satu per satu, mengurangi risiko order fiktif, dan pesanan dapat langsung dialihkan ke status antrean dapur.
+          </div>
+        </section>
+
+        <section id="branch-inventory">
+          <p class="section-no">03</p>
+          <h2>2. Manajemen Stok Menu &amp; Multi-Cabang Realtime</h2>
+          <p>Mencegah pesanan masuk ketika stok sambal atau menu ayam di cabang tertentu sudah habis (out of stock).</p>
+          
+          <ul class="checklist">
+            <li><strong>Kolom ketersediaan (is_available / stock_qty):</strong> Tabel <code>branch_menus</code> untuk tracking status aktif/habis per menu per cabang.</li>
+            <li><strong>Inject context stok ke Prompt AI:</strong> AI hanya merekomendasikan dan memproses menu yang statusnya tersedia di cabang yang dipilih pelanggan.</li>
+            <li><strong>Dashboard Kasir Sederhana:</strong> Tombol toggle 1-klik untuk kasir/admin cabang mematikan menu ("Ayam Geprek Cabang Pusat: HABIS").</li>
+            <li><strong>Routing Pesanan ke Printer / Tab Cabang:</strong> Mengirim payload pesanan langsung ke layar antrean cabang tujuan via Socket.IO.</li>
+          </ul>
+        </section>
+
+        <section id="ai-enhancements">
+          <p class="section-no">04</p>
+          <h2>3. Peningkatan Kapabilitas AI (RAG &amp; Function Calling)</h2>
+          <p>Meningkatkan model lokal atau hybrid agar tidak hanya membaca katalog statis, namun juga dapat mengakses data transaksi dan informasi operasional terkini.</p>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Fitur</th>
+                  <th>Deskripsi Implementasi</th>
+                  <th>Dampak Bisnis</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Live Order Tracking</strong></td>
+                  <td>Pelanggan chat: <em>"Cek status pesanan ORD-12345"</em> → AI memanggil tool backend untuk mengambil status terkini (SEDANG DIMASAK / DALAM PENGANTARAN).</td>
+                  <td>Mengurangi 70% beban admin menjawab pertanyaan tracking order.</td>
+                </tr>
+                <tr>
+                  <td><strong>RAG Knowledge Base</strong></td>
+                  <td>Mengambil potongan dokumen FAQ (promo hari ini, alergen, syarat pengiriman, lokasi parkir) secara semantik sebelum memanggil model.</td>
+                  <td>Jawaban akurat tentang detail kebijakan restoran tanpa meluberkan konteks prompt.</td>
+                </tr>
+                <tr>
+                  <td><strong>Upgrade Model / Dual Engine</strong></td>
+                  <td>Opsi fallback otomatis ke model cloud (misal Groq / Claude / OpenAI) jika Termux lokal offline atau traffic lonjakan tinggi.</td>
+                  <td>Zero-downtime pelayanan pelanggan bahkan saat perangkat lokal restart.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="push-notifications">
+          <p class="section-no">05</p>
+          <h2>4. Proactive WhatsApp Notifications (Outbound Flow)</h2>
+          <p>Memanfaatkan WAHA untuk mengirimkan notifikasi status transaksi secara proaktif kepada pelanggan tanpa menunggu pelanggan bertanya.</p>
+
+          <pre><code>[Trigger di Kitchen/Admin Dashboard]
+Order diubah ke status "SIAP_DIAMBIL" atau "SEDANG_DIKIRIM"
+  ↓
+Express memicu WAHA Service (sendMessage ke saved chat_id @lid)
+  ↓
+Pesan WhatsApp otomatis terkirim:
+"Pesanan Anda ORD-12345 sedang diantar oleh kurir! 🛵
+Estimasi tiba: 15-20 menit."</code></pre>
+        </section>
+
+        <section id="security-scale">
+          <p class="section-no">06</p>
+          <h2>5. Keamanan, Ketahanan &amp; Skalabilitas Infrastruktur</h2>
+          <ul class="checklist">
+            <li><strong>Migrasi SQLite ke PostgreSQL:</strong> Jika volume pesanan dan chat harian meningkat drastis, pisahkan database ke PostgreSQL terkelola dengan connection pooling.</li>
+            <li><strong>Redis Queue untuk Webhook:</strong> Gunakan antrean (BullMQ/Redis) untuk webhook WAHA inbound agar pesan berurutan rapi dan tidak membebani CPU saat peak hour.</li>
+            <li><strong>Automated Offsite Backup:</strong> Sinkronisasi file backup SQLite terenkripsi secara otomatis ke S3 / Cloudflare R2 setiap tengah malam.</li>
+            <li><strong>Rate Limiting per Nomor WA:</strong> Mencegah spam pesan berulang atau percobaan flooding prompt ke model LLM.</li>
+          </ul>
+        </section>
+
+        <section id="action-plan">
+          <p class="section-no">07</p>
+          <h2>Matriks Rencana Kerja (Milestones)</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Fase</th>
+                  <th>Fokus Deliverable</th>
+                  <th>Estimasi Kompleksitas</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Fase 1 (Next Immediate)</strong></td>
+                  <td>Status pesanan live (Cek Order via WA) + Toggle stok menu per cabang di Admin Dashboard.</td>
+                  <td>Sedang (Backend + Prompt Logic)</td>
+                </tr>
+                <tr>
+                  <td><strong>Fase 2</strong></td>
+                  <td>Integrasi Payment Gateway (QRIS dinamis via WhatsApp) + Otomatisasi status bayar.</td>
+                  <td>Sedang (Gateway API + Webhook)</td>
+                </tr>
+                <tr>
+                  <td><strong>Fase 3</strong></td>
+                  <td>Push notification status pesanan (Dimasak / Diantar) + Live kitchen display screen.</td>
+                  <td>Rendah - Sedang (Socket.IO + WAHA outbound)</td>
+                </tr>
+                <tr>
+                  <td><strong>Fase 4</strong></td>
+                  <td>RAG Knowledge Base terintegrasi + Multi-agent fallback (Termux + Cloud failover).</td>
+                  <td>Tinggi (Vector Search / Prompting)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <nav class="next-doc">
+          <span>Kembali ke manual</span>
+          <a href="index.html">← Portal Dokumentasi</a>
+        </nav>
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <span>Sambal Joelid / Roadmap &amp; Architecture</span>
+    <span>Rencana Kerja Teknis Lanjutan</span>
+  </footer>
+</body>
+</html>
