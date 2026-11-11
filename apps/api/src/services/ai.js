@@ -16,6 +16,29 @@ const AIOutputSchema = z.object({
   replyText: z.string(),
 });
 
+const safeReplies = {
+  ORDER: 'Silakan sebutkan menu, jumlah, dan cabang yang Anda pilih agar pesanan dapat kami rangkum.',
+  COMPLAINT: 'Mohon ceritakan keluhan Anda beserta nama dan cabang terkait agar dapat kami catat.',
+  GENERAL_QUESTION: 'Halo! Ada yang bisa kami bantu terkait menu, pesanan, atau keluhan Sambal Joelid?',
+  HANDOFF: 'Baik, kami akan menghubungkan Anda dengan admin.',
+  UNKNOWN: 'Mohon jelaskan kebutuhan Anda, apakah ingin bertanya, membuat pesanan, atau menyampaikan keluhan.',
+};
+
+export function normalizeAIOutput(value) {
+  const rawIntent = typeof value?.intent === 'string' ? value.intent.toUpperCase() : 'UNKNOWN';
+  const intent = Object.hasOwn(safeReplies, rawIntent) ? rawIntent : 'UNKNOWN';
+  const extractedData = value?.extractedData && typeof value.extractedData === 'object'
+    ? value.extractedData
+    : undefined;
+  const replyText = typeof value?.replyText === 'string' && value.replyText.trim()
+    ? value.replyText.trim()
+    : safeReplies[intent];
+
+  const result = AIOutputSchema.safeParse({ intent, extractedData, replyText });
+  if (result.success) return result.data;
+  return { intent, replyText: safeReplies[intent] };
+}
+
 export class AIEngine {
   constructor(config) {
     this.baseUrl = config.baseUrl; // https://termux-tunnel-url/v1
@@ -112,7 +135,7 @@ Jangan menentukan harga akhir order (backend yang akan kalkulasi).`;
         if (!jsonMatch) throw new Error('No JSON found in response');
 
         const parsed = JSON.parse(jsonMatch[0]);
-        return AIOutputSchema.parse(parsed);
+        return normalizeAIOutput(parsed);
       } catch (error) {
         if (error.name === 'AbortError') {
           throw new Error('AI_TIMEOUT');

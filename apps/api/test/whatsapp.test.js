@@ -6,6 +6,7 @@ import test from 'node:test';
 import { openDatabase } from '../src/database.js';
 import { OrderComplaintBridge } from '../src/services/orderComplaintBridge.js';
 import { WAHAClient } from '../src/services/waha.js';
+import { normalizeAIOutput } from '../src/services/ai.js';
 
 function temporaryDatabase(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sambal-joelid-'));
@@ -77,4 +78,19 @@ test('WAHA client preserves LID replies and removes device suffix', async (t) =>
   const client = new WAHAClient('http://127.0.0.1:3000', 'secret', 'sambal-joelid');
   await client.sendMessage('123456:2@lid', 'Halo');
   assert.equal(body.chatId, '123456@lid');
+});
+
+test('AI output receives a safe reply when small model omits replyText', () => {
+  const output = normalizeAIOutput({ intent: 'general_question' });
+  assert.equal(output.intent, 'GENERAL_QUESTION');
+  assert.match(output.replyText, /bantu/i);
+});
+
+test('invalid extracted AI data is discarded instead of failing the conversation', () => {
+  const output = normalizeAIOutput({
+    intent: 'ORDER',
+    replyText: 'Baik.',
+    extractedData: { items: [{ menuId: 'ayam-geprek', quantity: 0 }] },
+  });
+  assert.deepEqual(output, { intent: 'ORDER', replyText: 'Silakan sebutkan menu, jumlah, dan cabang yang Anda pilih agar pesanan dapat kami rangkum.' });
 });
