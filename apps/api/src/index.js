@@ -211,16 +211,21 @@ async function processMessage(conversationId, phone, chatId, message) {
         response = `❌ Maaf, ada masalah dengan pesanan Anda. Pesan Anda telah kami teruskan ke admin untuk ditangani.`;
         db.prepare('UPDATE whatsapp_conversations SET state = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('WAITING_ADMIN', conversationId);
       }
-    } else if (aiResult.intent === 'COMPLAINT' && aiResult.extractedData?.complaintDescription) {
-      // Simpan pending action untuk complaint
-      bridge.savePendingAction(conversationId, 'COMPLAINT_CONFIRMATION', {
-        customerName: aiResult.extractedData.customerName || 'Pelanggan',
-        branchId: aiResult.extractedData.branchId,
-        category: aiResult.extractedData.complaintCategory,
-        description: aiResult.extractedData.complaintDescription,
-      });
+    } else if (aiResult.intent === 'COMPLAINT') {
+      const description = (aiResult.extractedData?.complaintDescription || message).trim().slice(0, 2000);
+      if (description.length < 10) {
+        response = 'Mohon ceritakan keluhan Anda dengan lebih lengkap agar dapat kami catat dan teruskan kepada admin.';
+      } else {
+        // Pesan asli menjadi fallback tepercaya jika model kecil gagal mengekstrak deskripsi.
+        bridge.savePendingAction(conversationId, 'COMPLAINT_CONFIRMATION', {
+          customerName: aiResult.extractedData?.customerName || 'Pelanggan',
+          branchId: aiResult.extractedData?.branchId,
+          category: aiResult.extractedData?.complaintCategory,
+          description,
+        });
 
-      response = `📝 Ringkasan keluhan Anda:\n\n"${aiResult.extractedData.complaintDescription}"\n\nBalas dengan *YA* untuk kirim keluhan, atau *BATAL* untuk batal.`;
+        response = `📝 Ringkasan keluhan Anda:\n\n"${description}"\n\nBalas dengan *YA* untuk kirim keluhan, atau *BATAL* untuk batal.`;
+      }
     }
 
     // Kirim response AI
