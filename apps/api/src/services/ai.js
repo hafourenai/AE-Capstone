@@ -24,6 +24,49 @@ const safeReplies = {
   UNKNOWN: 'Mohon jelaskan kebutuhan Anda, apakah ingin bertanya, membuat pesanan, atau menyampaikan keluhan.',
 };
 
+const aiResponseFormat = {
+  type: 'json_schema',
+  json_schema: {
+    name: 'sambal_joelid_customer_assistant',
+    strict: true,
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        intent: {
+          type: 'string',
+          enum: ['ORDER', 'COMPLAINT', 'GENERAL_QUESTION', 'HANDOFF', 'UNKNOWN'],
+        },
+        extractedData: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            customerName: { type: 'string' },
+            branchId: { type: 'string' },
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  menuId: { type: 'string' },
+                  quantity: { type: 'integer', minimum: 1 },
+                },
+                required: ['menuId', 'quantity'],
+              },
+            },
+            notes: { type: 'string' },
+            complaintCategory: { type: 'string' },
+            complaintDescription: { type: 'string' },
+          },
+        },
+        replyText: { type: 'string', minLength: 1 },
+      },
+      required: ['intent', 'extractedData', 'replyText'],
+    },
+  },
+};
+
 export function normalizeAIOutput(value) {
   const rawIntent = typeof value?.intent === 'string' ? value.intent.toUpperCase() : 'UNKNOWN';
   const intent = Object.hasOwn(safeReplies, rawIntent) ? rawIntent : 'UNKNOWN';
@@ -96,6 +139,11 @@ INSTRUKSI:
 4. Berikan replyText ramah dalam bahasa Indonesia yang sesuai intent.
 5. Output HARUS berupa JSON valid tanpa teks tambahan.
 
+FORMAT WAJIB:
+{"intent":"GENERAL_QUESTION","extractedData":{},"replyText":"Halo! Ada yang bisa kami bantu?"}
+
+Semua output wajib memiliki intent, extractedData (gunakan {} bila kosong), dan replyText yang tidak kosong.
+
 Jangan mengarang menu, harga, atau cabang yang tidak ada dalam katalog.
 Jangan menentukan harga akhir order (backend yang akan kalkulasi).`;
 
@@ -118,7 +166,7 @@ Jangan menentukan harga akhir order (backend yang akan kalkulasi).`;
             ],
             temperature: 0.3,
             max_tokens: 250,
-            response_format: { type: 'json_object' },
+            response_format: aiResponseFormat,
           }),
           signal: controller.signal,
         });
