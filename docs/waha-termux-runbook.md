@@ -43,7 +43,7 @@ Hasil harus menunjukkan `127.0.0.1:3000`, bukan `0.0.0.0:3000`.
 WAHA tidak dipublikasikan. Dari komputer admin, buka SSH tunnel:
 
 ```bash
-ssh -L 3000:127.0.0.1:3000 USER@IP_VPS
+ssh -p <SSH_PORT> -L 3000:127.0.0.1:3000 <VPS_USER>@<VPS_HOST>
 ```
 
 Kemudian buka `http://127.0.0.1:3000/dashboard`, login dengan kredensial dashboard dari `/opt/waha/.env`, buat/start session `sambal-joelid`, lalu scan QR memakai nomor bisnis khusus.
@@ -79,7 +79,7 @@ termux-wake-lock
   --alias qwen2.5-1.5b-instruct \
   --host 127.0.0.1 \
   --port 8080 \
-  --ctx-size 2048 \
+  --ctx-size 4096 \
   --parallel 1 \
   --threads 4 \
   --n-predict 300 \
@@ -87,7 +87,7 @@ termux-wake-lock
   --no-ui
 ```
 
-Konfigurasi 2048 context dan 300 output token cukup untuk katalog awal. Backend meminta maksimal 250 output token dan menggunakan timeout 90 detik karena inferensi HP lebih lambat. Naikkan `--ctx-size` ke 4096 jika katalog/cabang bertambah atau respons mulai terpotong; kenaikan context juga menambah penggunaan RAM HP.
+Context 4096 direkomendasikan karena katalog aktif berasal dari CSV dan dapat berisi puluhan menu. Backend memakai prompt ringkas, maksimal 220 output token, empat pesan konteks terakhir, dan retry tanpa riwayat bila provider menolak request karena ukuran konteks. Context yang lebih besar menambah penggunaan RAM perangkat.
 
 Jalankan tunnel HTTPS menuju `http://127.0.0.1:8080`. Jangan membuka `llama-server` langsung pada `0.0.0.0` tanpa autentikasi. Matikan battery optimization untuk Termux dan tunnel, gunakan charger yang aman, serta pantau suhu HP.
 
@@ -105,7 +105,7 @@ curl -fsS "$AI_BASE_URL/models" -H "Authorization: Bearer $AI_API_KEY"
 4. Pastikan ringkasan memakai harga database, lalu balas `YA`.
 5. Pastikan order muncul di dashboard dengan sumber `WHATSAPP`.
 6. Kirim `admin`; pastikan state berubah menjadi `WAITING_ADMIN` dan AI berhenti.
-7. Balas dari dashboard, lalu aktifkan kembali `AI_ACTIVE`.
+7. Balas dari dashboard; state otomatis menjadi `ADMIN_ACTIVE`. Pastikan AI kembali ke `AI_ACTIVE` setelah jeda konfigurasi atau melalui tombol aktivasi manual.
 8. Matikan tunnel Termux sementara; pastikan pelanggan menerima fallback dan percakapan masuk `WAITING_ADMIN`.
 9. Kirim ulang payload webhook yang sama; pastikan transaksi tidak terduplikasi.
 

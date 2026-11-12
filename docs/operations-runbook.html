@@ -23,12 +23,12 @@ docker compose logs --tail=30 waha
 
 curl -fsS https://qwen.hontalk.my.id/v1/models \
   -H "Authorization: Bearer $AI_API_KEY"</code></pre>
-          <div class="callout"><strong>Normal:</strong> API <code>{"ok":true}</code>, WAHA <code>healthy</code> dan session <code>WORKING</code>, Qwen menampilkan alias model.</div>
+          <div class="callout"><strong>Normal:</strong> API <code>{"ok":true}</code>, WAHA <code>healthy</code> dan session <code>WORKING</code>, Qwen menampilkan alias model. Halaman Ikhtisar admin juga menampilkan kesehatan integrasi WhatsApp.</div>
 
           <h3>Membuka Dashboard WAHA dari Komputer Lokal:</h3>
           <p>Karena port 3000 hanya dibuka di loopback VPS (127.0.0.1:3000), buka terminal komputer lokal Anda dan jalankan SSH Tunnel:</p>
           <pre><code># Dari terminal laptop / PC lokal Anda:
-ssh -p 20231 -N -L 3000:127.0.0.1:3000 sambal@IP_VPS
+ssh -p &lt;SSH_PORT&gt; -N -L 3000:127.0.0.1:3000 sambal@&lt;VPS_HOST&gt;
 
 # Buka browser lokal:
 # http://localhost:3000/dashboard atau http://localhost:3000/api/docs</code></pre>
@@ -52,7 +52,7 @@ docker compose ps</code></pre></div></div>
         </section>
 
         <section id="acceptance"><p class="section-no">04</p><h2>Acceptance test</h2>
-          <ol class="steps"><li><strong>General:</strong> kirim pertanyaan menu dan pastikan respons relevan.</li><li><strong>Order:</strong> kirim nama, item, jumlah, cabang; verifikasi total backend; balas <code>YA</code>.</li><li><strong>Complaint:</strong> kirim keluhan lengkap; verifikasi ringkasan; balas <code>YA</code>.</li><li><strong>Handoff:</strong> kirim “admin”; pastikan <code>WAITING_ADMIN</code> dan AI berhenti.</li><li><strong>Outage:</strong> matikan tunnel Qwen sementara; pastikan fallback dan handoff.</li><li><strong>Persistence:</strong> restart WAHA; pastikan session kembali <code>WORKING</code>.</li></ol>
+          <ol class="steps"><li><strong>General:</strong> kirim sapaan dan pastikan petunjuk keyword ditampilkan.</li><li><strong>Menu:</strong> kirim <code>menu</code>; pastikan hanya item CSV yang aktif dan memiliki stok yang ditampilkan.</li><li><strong>Order:</strong> kirim kalimat informal, item, jumlah, dan cabang; verifikasi total backend; balas <code>YA</code>.</li><li><strong>Complaint:</strong> kirim keluhan lengkap; verifikasi ringkasan; balas <code>YA</code>.</li><li><strong>Handoff:</strong> kirim “admin”; pastikan <code>WAITING_ADMIN</code>. Balasan dashboard mengubahnya menjadi <code>ADMIN_ACTIVE</code>, lalu kembali otomatis ke <code>AI_ACTIVE</code>.</li><li><strong>Dashboard:</strong> ubah status order/keluhan, buka bubble chat, dan pastikan data WhatsApp memiliki tombol percakapan.</li><li><strong>Outage:</strong> matikan tunnel Qwen sementara; pastikan fallback operasional dikirim.</li><li><strong>Persistence:</strong> restart WAHA; pastikan session kembali <code>WORKING</code>.</li></ol>
           <pre><code>sqlite3 /var/lib/sambal-joelid/customer-module.sqlite \
   "SELECT reference_number,total_amount,status,source FROM customer_orders ORDER BY id DESC LIMIT 1;"
 
@@ -73,6 +73,8 @@ sqlite3 /var/lib/sambal-joelid/customer-module.sqlite \
 
         <section id="security"><p class="section-no">06</p><h2>Aturan keamanan</h2>
           <ul class="checklist"><li>Jangan menaruh secret, QR, pairing code, nomor pelanggan, atau payload webhook di issue/chat.</li><li>WAHA hanya loopback; akses dashboard melalui SSH port forwarding.</li><li>Gunakan secret berbeda untuk JWT, WAHA API, webhook HMAC, AI API, dan tunnel.</li><li>Log WAHA production berada pada level <code>warn</code>.</li><li>Jangan menjalankan <code>git reset --hard</code> pada VPS saat ada perubahan lokal.</li><li>Rotasi segera credential yang pernah terlihat pada terminal publik atau percakapan.</li></ul>
+          <h3>Retensi dan beban penyimpanan</h3>
+          <ul class="checklist"><li>Pesan WhatsApp disimpan di SQLite sesuai <code>WHATSAPP_MESSAGE_RETENTION_DAYS</code> (default 30 hari) dan dibersihkan saat API startup.</li><li>Pending action yang telah selesai mengikuti retensi yang sama; order, keluhan, dan record percakapan tidak memiliki penghapusan otomatis.</li><li>Data utama berada pada disk VPS di file SQLite. RAM hanya digunakan sementara untuk query aktif, cache katalog, rate-limit bucket, dan antrean AI.</li><li>Backup SQLite terkompresi disimpan 14 hari oleh script backup. Untuk disaster recovery, salin backup terenkripsi ke storage terpisah.</li></ul>
         </section>
         <nav class="next-doc"><span>Kembali</span><a href="index.html">← Portal dokumentasi</a></nav>
       </article>

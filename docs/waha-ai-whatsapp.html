@@ -50,11 +50,11 @@ curl -fsS http://127.0.0.1:3000/api/sessions/sambal-joelid \
           <div class="cards two">
             <div class="card">
               <span class="tag">METODE 1: USER SAMBAL</span>
-              <pre><code>ssh -p 20231 -N -L 3000:127.0.0.1:3000 sambal@IP_VPS</code></pre>
+              <pre><code>ssh -p &lt;SSH_PORT&gt; -N -L 3000:127.0.0.1:3000 sambal@&lt;VPS_HOST&gt;</code></pre>
             </div>
             <div class="card">
               <span class="tag">METODE 2: USER ROOT</span>
-              <pre><code>ssh -p 20231 -N -L 3000:127.0.0.1:3000 root@IP_VPS</code></pre>
+              <pre><code>ssh -p &lt;SSH_PORT&gt; -N -L 3000:127.0.0.1:3000 root@&lt;VPS_HOST&gt;</code></pre>
             </div>
           </div>
 
@@ -75,9 +75,9 @@ curl -fsS http://127.0.0.1:3000/api/sessions/sambal-joelid \
   --model "$HOME/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf" \
   --alias qwen2.5-1.5b-instruct \
   --host 127.0.0.1 --port 8080 \
-  --ctx-size 2048 --parallel 1 --threads 4 \
+  --ctx-size 4096 --parallel 1 --threads 4 \
   --n-predict 300 --api-key '&lt;AI_API_KEY&gt;' --no-ui</code></pre>
-          <ul class="checklist"><li><code>termux-wake-lock</code> aktif.</li><li>Battery optimization Termux dinonaktifkan.</li><li><code>cloudflared tunnel run --token &lt;token&gt;</code> berjalan terpisah.</li><li>Hostname statis: <code>qwen.hontalk.my.id</code>.</li><li>Backend timeout 90 detik dan concurrency satu.</li></ul>
+          <ul class="checklist"><li><code>termux-wake-lock</code> aktif.</li><li>Battery optimization Termux dinonaktifkan.</li><li><code>cloudflared tunnel run --token &lt;token&gt;</code> berjalan terpisah.</li><li>Hostname statis: <code>qwen.hontalk.my.id</code>.</li><li>Backend timeout 90 detik dan concurrency satu.</li><li>Context 4096 menampung katalog CSV; backend melakukan retry ringkas bila request ditolak.</li></ul>
           <div class="callout warn"><strong>Tiga secret berbeda:</strong> tunnel token menghubungkan cloudflared; AI API key melindungi llama-server; WAHA API key melindungi API WAHA. Jangan saling menggunakan ulang.</div>
         </section>
 
@@ -95,13 +95,13 @@ X-Webhook-Hmac-Algorithm: sha512</code></pre>
             <tr><td><code>GENERAL_QUESTION</code></td><td>Qwen menjawab dengan konteks menu dan cabang aktif.</td></tr>
             <tr><td><code>ORDER</code></td><td>Backend memvalidasi menu/cabang, menghitung harga, meminta <code>YA/BATAL</code>, lalu commit.</td></tr>
             <tr><td><code>COMPLAINT</code></td><td>Pesan asli menjadi fallback deskripsi; selalu meminta <code>YA/BATAL</code> sebelum commit.</td></tr>
-            <tr><td><code>HANDOFF</code></td><td>State menjadi <code>WAITING_ADMIN</code>; AI berhenti.</td></tr>
+            <tr><td><code>HANDOFF</code></td><td>State menjadi <code>WAITING_ADMIN</code>; AI berhenti sementara. Balasan admin mengubah state menjadi <code>ADMIN_ACTIVE</code>, kemudian otomatis kembali ke <code>AI_ACTIVE</code> setelah jeda.</td></tr>
           </tbody></table></div>
-          <p>Output Qwen dibatasi JSON Schema. Jika model kecil tetap menghasilkan output tidak lengkap, backend memakai safe response sebagai lapisan darurat—bukan respons normal.</p>
+          <p>Output Qwen dibatasi JSON Schema. Guardrail backend mengenali kata sehari-hari seperti <code>pesen</code>/<code>psen</code>, menyediakan keyword <code>menu</code>, <code>pesan</code>, <code>keluhan</code>, dan <code>admin</code>, serta mencegah permintaan order salah diklasifikasikan sebagai keluhan. Jika model kecil gagal, backend memakai retry ringkas dan safe response.</p>
         </section>
 
         <section id="dashboard"><p class="section-no">07</p><h2>Dashboard admin</h2>
-          <ul class="checklist"><li>Order/keluhan memiliki badge <code>WEB</code> atau <code>WHATSAPP</code>.</li><li>Tab WhatsApp menampilkan percakapan dan state handoff.</li><li>Admin dapat membalas melalui WAHA menggunakan chat ID tersimpan.</li><li>QR, API key, AI key, dan catatan internal tidak pernah ditampilkan kepada pelanggan.</li></ul>
+          <ul class="checklist"><li>Ikhtisar menampilkan jumlah order, keluhan, percakapan, dan kesehatan integrasi.</li><li>Order/keluhan memiliki sumber <code>WEB</code> atau <code>WHATSAPP</code>; sumber WhatsApp dapat membuka percakapan terkait.</li><li>Chat memakai bubble pesan dan diperbarui melalui Socket.IO.</li><li>Admin dapat mengubah status serta state secara optimistis agar kontrol terasa cepat.</li><li>QR, API key, AI key, dan catatan internal tidak pernah ditampilkan kepada pelanggan.</li></ul>
         </section>
         <nav class="next-doc"><span>Berikutnya</span><a href="operations-runbook.html">Operasional &amp; troubleshooting →</a></nav>
       </article>

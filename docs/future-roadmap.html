@@ -35,7 +35,7 @@
       <aside class="toc" aria-label="Daftar isi">
         <strong>Di halaman ini</strong>
         <a href="#priorities">Prioritas Utama</a>
-        <a href="#payment-gateway">1. Payment Gateway</a>
+        <a href="#manual-payment">1. Transfer Manual</a>
         <a href="#branch-inventory">2. Stok &amp; Cabang</a>
         <a href="#ai-enhancements">3. Upgrade AI (RAG &amp; Tool)</a>
         <a href="#push-notifications">4. Notifikasi WhatsApp</a>
@@ -50,9 +50,9 @@
           <p>Setelah integrasi WhatsApp pilot berhasil diverifikasi end-to-end, fokus sistem berpindah dari <em>konektivitas dasar</em> menuju <em>efisiensi transaksi dan otomatisasi menyeluruh</em>:</p>
           <div class="cards three">
             <div class="card">
-              <span class="tag">TRANSAKSI OTOMATIS</span>
-              <h3>Payment Gateway</h3>
-              <p>QRIS dinamis via WhatsApp agar konfirmasi bayar instan tanpa cek mutasi manual admin.</p>
+              <span class="tag">PEMBAYARAN TERKENDALI</span>
+              <h3>Transfer Manual</h3>
+              <p>Informasi rekening dikonfigurasi oleh pemilik usaha dan dikirim setelah order terkonfirmasi.</p>
             </div>
             <div class="card">
               <span class="tag">OPERASIONAL REALTIME</span>
@@ -67,49 +67,48 @@
           </div>
         </section>
 
-        <section id="payment-gateway">
+        <section id="manual-payment">
           <p class="section-no">02</p>
-          <h2>1. Integrasi Payment Gateway (QRIS Otomatis)</h2>
-          <p>Saat ini order WhatsApp berstatus <code>NEW</code> dan memerlukan konfirmasi pembayaran manual oleh kasir/admin. Tahap berikutnya adalah penerbitan QRIS instan.</p>
+          <h2>1. Kerangka Pembayaran Transfer Manual</h2>
+          <p>Payment gateway tidak termasuk scope. Setelah pelanggan mengonfirmasi order, backend dapat menambahkan instruksi transfer bila konfigurasi rekening bisnis telah diisi melalui environment VPS.</p>
           
           <div class="cards two">
             <div class="card">
-              <span class="tag">PROVIDER PILIHAN</span>
-              <h3>Midtrans / Xendit / Tripay</h3>
-              <p>Mendukung webhook notifikasi pembayaran dan pembuatan QRIS / Virtual Account dinamis secara realtime.</p>
+              <span class="tag">KONFIGURASI</span>
+              <h3>Data rekening dari klien</h3>
+              <p>Nama bank, nomor rekening, dan nama pemilik disimpan sebagai secret environment—bukan di source code atau dokumentasi.</p>
             </div>
             <div class="card">
               <span class="tag">ALUR PENGGUNA</span>
-              <h3>Direct-in-Chat Checkout</h3>
-              <p>Setelah pelanggan balas <code>YA</code>, bot langsung mengirim gambar QRIS dinamis dan link pembayaran.</p>
+              <h3>Instruksi setelah konfirmasi</h3>
+              <p>Setelah pelanggan membalas <code>YA</code> dan order berhasil dibuat, WhatsApp mengirim total, referensi, dan instruksi transfer.</p>
             </div>
           </div>
 
           <h3>Spesifikasi Alur Teknis:</h3>
           <pre><code>Pelanggan konfirmasi "YA"
   ↓
-Express memanggil Payment Gateway API (Create QRIS Transaction)
+Backend validasi menu, stok, cabang, dan total
   ↓
-WAHA mengirim gambar QRIS + batas waktu bayar (misal 15 menit)
+Order disimpan dengan status NEW
   ↓
-Pelanggan scan QRIS &amp; bayar via m-Banking/E-Wallet
+WAHA mengirim referensi + total + instruksi transfer
   ↓
-Webhook Payment Gateway → Express /api/v1/integrations/payment/webhook
-  ↓
-Order status berubah: PAID → Notifikasi otomatis ke dapur &amp; pelanggan</code></pre>
+Admin memverifikasi pembayaran dan memperbarui status</code></pre>
 
           <div class="callout">
-            <strong>Keuntungan:</strong> Kasir tidak perlu cek mutasi rekening satu per satu, mengurangi risiko order fiktif, dan pesanan dapat langsung dialihkan ke status antrean dapur.
+            <strong>Batasan:</strong> verifikasi pembayaran tetap dilakukan admin. Nilai rekening asli tidak boleh ditulis ke Git, log, atau dokumentasi.
           </div>
         </section>
 
         <section id="branch-inventory">
           <p class="section-no">03</p>
           <h2>2. Manajemen Stok Menu &amp; Multi-Cabang Realtime</h2>
-          <p>Mencegah pesanan masuk ketika stok sambal atau menu ayam di cabang tertentu sudah habis (out of stock).</p>
+          <p>Master menu, harga, status aktif, stok, deskripsi, dan alias sudah dibaca dari published CSV dengan cache singkat. Tahap lanjutan adalah memisahkan stok per cabang.</p>
           
           <ul class="checklist">
-            <li><strong>Kolom ketersediaan (is_available / stock_qty):</strong> Tabel <code>branch_menus</code> untuk tracking status aktif/habis per menu per cabang.</li>
+            <li><strong>Sudah aktif:</strong> item dengan <code>aktif=FALSE</code> atau <code>stok=0</code> tidak ditawarkan dan tidak dapat dipesan.</li>
+            <li><strong>Tahap berikutnya:</strong> tabel <code>branch_menus</code> untuk tracking stok berbeda pada setiap cabang.</li>
             <li><strong>Inject context stok ke Prompt AI:</strong> AI hanya merekomendasikan dan memproses menu yang statusnya tersedia di cabang yang dipilih pelanggan.</li>
             <li><strong>Dashboard Kasir Sederhana:</strong> Tombol toggle 1-klik untuk kasir/admin cabang mematikan menu ("Ayam Geprek Cabang Pusat: HABIS").</li>
             <li><strong>Routing Pesanan ke Printer / Tab Cabang:</strong> Mengirim payload pesanan langsung ke layar antrean cabang tujuan via Socket.IO.</li>
@@ -197,8 +196,8 @@ Estimasi tiba: 15-20 menit."</code></pre>
                 </tr>
                 <tr>
                   <td><strong>Fase 2</strong></td>
-                  <td>Integrasi Payment Gateway (QRIS dinamis via WhatsApp) + Otomatisasi status bayar.</td>
-                  <td>Sedang (Gateway API + Webhook)</td>
+                  <td>Finalisasi konfigurasi transfer manual + prosedur verifikasi pembayaran admin.</td>
+                  <td>Rendah (Environment + SOP)</td>
                 </tr>
                 <tr>
                   <td><strong>Fase 3</strong></td>

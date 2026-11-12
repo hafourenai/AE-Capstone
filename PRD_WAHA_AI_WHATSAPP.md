@@ -2,9 +2,11 @@
 
 **Produk:** Sambal Joelid  
 **Versi:** 1.0  
-**Status:** Draft untuk persetujuan sebelum implementasi  
+**Status:** Baseline telah diimplementasikan; dokumen dipertahankan sebagai acuan requirement
 **Tanggal:** 9 November 2026  
 **Dokumen terkait:** `docs/deployment-vps-vercel.html`
+
+> Catatan implementasi 12 November 2026: katalog aktif berasal dari published CSV dengan cache, dashboard customer/admin dipisahkan, handoff admin bersifat sementara dan otomatis kembali ke AI, chat admin menggunakan realtime bubble view, serta pembayaran memakai kerangka transfer manual opsional—bukan payment gateway. Detail operasional terkini berada di folder `docs/`.
 
 ---
 

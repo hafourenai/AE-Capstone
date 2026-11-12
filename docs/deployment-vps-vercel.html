@@ -39,7 +39,7 @@
         <section id="architecture">
           <p class="section-no">01</p><h2>Arsitektur produksi</h2>
           <div class="cards three">
-            <div class="card"><span class="tag">FRONTEND</span><h3>Vercel</h3><code>joelid.hontalk.my.id</code><p>React/Vite customer web dan dashboard admin.</p></div>
+            <div class="card"><span class="tag">FRONTEND</span><h3>Vercel</h3><code>customer + admin host</code><p>React/Vite dengan akses customer dan dashboard admin pada alamat terpisah.</p></div>
             <div class="card"><span class="tag">BACKEND</span><h3>Ubuntu 24.04 VPS</h3><code>api.joelid.hontalk.my.id</code><p>Express, Socket.IO, Nginx, systemd, Node.js 22.</p></div>
             <div class="card"><span class="tag">DATA</span><h3>SQLite persistent</h3><code>/var/lib/sambal-joelid/</code><p>Database customer hanya berada di VPS.</p></div>
           </div>
@@ -51,7 +51,8 @@ Browser → api.joelid.hontalk.my.id → Nginx → Express :3001 → SQLite</cod
           <p class="section-no">02</p><h2>Domain dan DNS Cloudflare</h2>
           <p>Zone <code>hontalk.my.id</code> dikelola melalui Cloudflare. API bertingkat dibuat <em>DNS only</em> agar sertifikat origin Let’s Encrypt tetap melayani TLS tanpa kendala wildcard bertingkat.</p>
           <div class="table-wrap"><table><thead><tr><th>Hostname</th><th>Record</th><th>Mode</th><th>Tujuan</th></tr></thead><tbody>
-            <tr><td><code>joelid.hontalk.my.id</code></td><td>CNAME target Vercel</td><td>Proxied</td><td>Frontend</td></tr>
+             <tr><td><code>joelid.hontalk.my.id</code></td><td>CNAME target Vercel</td><td>Proxied</td><td>Frontend customer</td></tr>
+             <tr><td><code>admin.joelid.hontalk.my.id</code></td><td>CNAME target Vercel</td><td>DNS only</td><td>Dashboard admin</td></tr>
             <tr><td><code>api.joelid.hontalk.my.id</code></td><td>A → IP VPS</td><td>DNS only</td><td>Nginx/API</td></tr>
             <tr><td><code>qwen.hontalk.my.id</code></td><td>CNAME Cloudflare Tunnel</td><td>Proxied</td><td>Model Termux</td></tr>
           </tbody></table></div>
@@ -63,8 +64,8 @@ curl -fsS https://api.joelid.hontalk.my.id/api/v1/health</code></pre>
 
         <section id="access">
           <p class="section-no">03</p><h2>Akses dan lokasi penting</h2>
-          <pre><code>ssh -p 20231 sambal@IP_VPS   # Git, npm, test, build
-ssh -p 20231 root@IP_VPS     # systemd, Docker, Nginx, /opt</code></pre>
+          <pre><code>ssh -p &lt;SSH_PORT&gt; sambal@&lt;VPS_HOST&gt;   # Git, npm, test, build
+ssh -p &lt;SSH_PORT&gt; root@&lt;VPS_HOST&gt;     # systemd, Docker, Nginx, /opt</code></pre>
           <div class="table-wrap"><table><tbody>
             <tr><th>Source</th><td><code>/var/www/sambal-joelid</code></td></tr>
             <tr><th>Environment</th><td><code>/var/www/sambal-joelid/.env</code> — <code>root:sambal 640</code></td></tr>
@@ -93,7 +94,7 @@ CUSTOMER_MODULE_DB_PATH=/var/lib/sambal-joelid/customer-module.sqlite
 JWT_SECRET=&lt;secret&gt;
 ADMIN_EMAIL=&lt;email&gt;
 ADMIN_PASSWORD=&lt;secret&gt;
-CORS_ORIGINS=https://joelid.hontalk.my.id
+CORS_ORIGINS=https://joelid.hontalk.my.id,https://admin.joelid.hontalk.my.id
 
 WAHA_BASE_URL=http://127.0.0.1:3000
 WAHA_API_KEY=&lt;secret&gt;
@@ -103,7 +104,11 @@ WAHA_SESSION_NAME=sambal-joelid
 AI_BASE_URL=https://qwen.hontalk.my.id/v1
 AI_API_KEY=&lt;secret&gt;
 AI_MODEL=qwen2.5-1.5b-instruct
-AI_TIMEOUT_MS=90000</code></pre>
+AI_TIMEOUT_MS=90000
+
+MENU_CSV_URL=&lt;published-csv-url&gt;
+MENU_CACHE_SECONDS=60
+WHATSAPP_ADMIN_PAUSE_SECONDS=180</code></pre>
         </section>
 
         <section id="vercel">
@@ -112,7 +117,8 @@ AI_TIMEOUT_MS=90000</code></pre>
             <li>Repository terhubung ke branch <code>main</code>.</li>
             <li>Build mengikuti <code>vercel.json</code> dan hanya workspace web.</li>
             <li><code>VITE_API_BASE_URL=https://api.joelid.hontalk.my.id/api/v1</code>.</li>
-            <li>Custom domain <code>joelid.hontalk.my.id</code>.</li>
+            <li>Custom domain customer dan admin harus ditambahkan ke project Vercel, bukan hanya dibuat sebagai DNS record.</li>
+            <li>Jika nameserver domain dikelola Cloudflare, record dibuat di Cloudflare. Host admin bertingkat menggunakan mode DNS only agar sertifikat Vercel dapat diterbitkan.</li>
             <li>Header <code>x-vercel-cache</code> dapat dipakai untuk memastikan origin Vercel.</li>
           </ul>
         </section>
