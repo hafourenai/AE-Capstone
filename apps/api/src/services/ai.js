@@ -131,63 +131,65 @@ export class AIEngine {
    * Klasifikasi intent dan ekstraksi data dari pesan pelanggan
    */
   async classifyIntent(customerMessage, catalogContext, history = []) {
-    const systemPrompt = `Anda adalah AI asisten customer service untuk Sambal Joelid, sebuah restoran cepat saji.
+    const systemPrompt = `Anda adalah customer service Sambal Joelid. Jawab natural, singkat, dan ramah dalam bahasa Indonesia.
 
-KATALOG MENU AKTIF:
-${catalogContext.menus.map(m => `- ${m.id}: ${m.name} (Rp ${m.price.toLocaleString('id-ID')})`).join('\n')}
+MENU AKTIF (id|nama|harga):
+${catalogContext.menus.map(m => `${m.id}|${m.name}|${m.price}`).join('\n')}
 
-CABANG AKTIF:
-${catalogContext.branches.map(b => `- ${b.id}: ${b.name}`).join('\n')}
+CABANG (id|nama):
+${catalogContext.branches.map(b => `${b.id}|${b.name}`).join('\n')}
 
-KATA KUNCI HANDOFF (jika pelanggan menulis ini, set intent ke HANDOFF):
-- admin, operator, manusia, bantuan langsung, komplain serius
-
-INSTRUKSI:
-1. Klasifikasikan pesan ke salah satu intent: ORDER, COMPLAINT, GENERAL_QUESTION, HANDOFF, UNKNOWN.
-2. Jika ORDER: ekstrak branchId, items (menuId + quantity), dan notes opsional.
-3. Jika COMPLAINT: ekstrak deskripsi keluhan dan kategori (KUALITAS_MAKANAN, PELAYANAN, KEBERSIHAN, PESANAN, LAINNYA).
-4. Berikan replyText natural, singkat, ramah, dan pahami singkatan/chat sehari-hari Indonesia (contoh: "sy mau psen mknan" berarti ingin ORDER).
-5. Output HARUS berupa JSON valid tanpa teks tambahan.
-
-FORMAT WAJIB:
-{"intent":"GENERAL_QUESTION","extractedData":{},"replyText":"Halo! Ada yang bisa kami bantu?"}
-
-Semua output wajib memiliki intent, extractedData (gunakan {} bila kosong), dan replyText yang tidak kosong.
-
-Jangan mengarang menu, harga, atau cabang yang tidak ada dalam katalog.
-Jangan menentukan harga akhir order (backend yang akan kalkulasi).
-Jangan pernah menganggap permintaan membeli/memesan makanan sebagai keluhan.`;
+Tentukan intent ORDER, COMPLAINT, GENERAL_QUESTION, HANDOFF, atau UNKNOWN. Admin/operator/manusia berarti HANDOFF.
+ORDER: ekstrak branchId, items [{menuId,quantity}], notes. COMPLAINT: ekstrak complaintDescription dan complaintCategory.
+Pahami singkatan Indonesia; "sy mau psen mknan" adalah ORDER, bukan keluhan. Jangan mengarang menu/harga/cabang dan jangan hitung harga akhir.
+Output hanya JSON: {"intent":"GENERAL_QUESTION","extractedData":{},"replyText":"Halo! Ada yang bisa kami bantu?"}`;
 
     return this.processWithQueue(async () => {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
       try {
-        const response = await fetch(`${this.baseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
-          },
-          body: JSON.stringify({
+        const requestCompletion = async (historyItems, maxTokens) => {
+          const response = await fetch(`${this.baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
+            },
+            body: JSON.stringify({
             model: this.model,
             messages: [
               { role: 'system', content: systemPrompt },
-              ...history.slice(-6).map(item => ({ role: item.sender_type === 'CUSTOMER' ? 'user' : 'assistant', content: item.content })),
+              ...historyItems.map(item => ({ role: item.sender_type === 'CUSTOMER' ? 'user' : 'assistant', content: item.content })),
               { role: 'user', content: customerMessage },
             ],
             temperature: 0.3,
-            max_tokens: 250,
+            max_tokens: maxTokens,
             response_format: aiResponseFormat,
-          }),
-          signal: controller.signal,
-        });
+            }),
+            signal: controller.signal,
+          });
 
-        if (!response.ok) {
-          throw new Error(`AI API returned ${response.status}`);
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            const detail = String(payload?.error?.message || payload?.message || response.statusText)
+              .replaceAll(customerMessage, '[redacted]')
+              .slice(0, 300);
+            const error = new Error(`AI API returned ${response.status}: ${detail}`);
+            error.status = response.status;
+            throw error;
+          }
+          return response.json();
+        };
+
+        let data;
+        try {
+          data = await requestCompletion(history.slice(-4), 220);
+        } catch (error) {
+          if (error.status !== 400) throw error;
+          console.warn(`[AI] Request ditolak (${error.message}); mencoba ulang tanpa riwayat percakapan`);
+          data = await requestCompletion([], 180);
         }
-
-        const data = await response.json();
         const content = data.choices?.[0]?.message?.content || '';
 
         // Parse JSON dari response (toleran terhadap teks pengantar)
