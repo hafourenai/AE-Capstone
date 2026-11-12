@@ -33,7 +33,7 @@ sudo -u "$APP_USER" bash -lc "cd '$APP_DIR' && npm ci --foreground-scripts"
 echo "[5/7] Memverifikasi binding better-sqlite3"
 if ! sudo -u "$APP_USER" bash -lc "cd '$APP_DIR' && npm run verify:native"; then
   echo "Binding belum tersedia; mencoba kompilasi ulang dari source."
-  if ! sudo -u "$APP_USER" bash -lc "cd '$APP_DIR' && npm rebuild better-sqlite3 --build-from-source"; then
+  if ! sudo -u "$APP_USER" bash -lc "cd '$APP_DIR' && npm rebuild better-sqlite3"; then
     echo "Kompilasi gagal. Pastikan build-essential dan python3 terpasang." >&2
     exit 1
   fi
