@@ -76,14 +76,11 @@ ssh -p 20231 root@IP_VPS     # systemd, Docker, Nginx, /opt</code></pre>
 
         <section id="deploy">
           <p class="section-no">04</p><h2>Deploy atau update API</h2>
-          <pre><code>sudo -u sambal git -C /var/www/sambal-joelid status --short
-sudo -u sambal git -C /var/www/sambal-joelid pull --ff-only origin main
-sudo -u sambal bash -lc 'cd /var/www/sambal-joelid &amp;&amp; npm ci &amp;&amp; npm test'
-bash /var/www/sambal-joelid/ops/backup-sqlite.sh
-systemctl restart sambal-joelid-api
+          <pre><code>bash /var/www/sambal-joelid/ops/deploy-vps.sh
 systemctl status sambal-joelid-api --no-pager
 curl -fsS https://api.joelid.hontalk.my.id/api/v1/health</code></pre>
-          <div class="callout"><strong>Expected:</strong> health mengembalikan <code>{"ok":true}</code>. Jangan menjalankan Git sebagai root; repository dimiliki user <code>sambal</code>.</div>
+          <div class="callout"><strong>Expected:</strong> script membuat backup, menjalankan <code>git pull --ff-only</code>, memasang dependency, memverifikasi binding native <code>better-sqlite3</code>, menjalankan test, lalu restart hanya jika seluruh tahap berhasil. Health mengembalikan <code>{"ok":true}</code>.</div>
+          <div class="callout warn"><strong>Jika native build gagal:</strong> pasang toolchain sekali dengan <code>apt-get install -y build-essential python3</code>, lalu jalankan kembali script deployment. Jangan menghapus <code>package-lock.json</code> di VPS.</div>
         </section>
 
         <section id="environment">

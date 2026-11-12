@@ -38,7 +38,7 @@ ssh -p 20231 -N -L 3000:127.0.0.1:3000 sambal@IP_VPS
           <pre><code>bash /var/www/sambal-joelid/ops/backup-sqlite.sh
 ls -lh /var/backups/sambal-joelid
 systemctl list-timers | grep sambal</code></pre>
-          <p>SQLite memakai <code>.backup</code> agar aman dalam mode WAL. Backup konfigurasi ditempatkan di <code>/var/backups/sambal-joelid/config</code>, bukan di repository. Session WAHA berada di <code>/var/lib/waha</code>.</p>
+          <p>SQLite memakai <code>.backup</code> agar aman dalam mode WAL. Hasil dikompresi ke <code>/var/backups/sambal-joelid/customer-module-TANGGAL-JAM.sqlite.gz</code>. Setiap eksekusi juga menghapus backup database yang berumur lebih dari 14 hari. Backup konfigurasi ditempatkan di <code>/var/backups/sambal-joelid/config</code>, bukan di repository. Session WAHA berada di <code>/var/lib/waha</code>.</p>
           <div class="callout warn"><strong>Backup lokal bukan disaster recovery.</strong> Salin backup terenkripsi ke storage berbeda dan uji restore berkala.</div>
         </section>
 
