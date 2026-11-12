@@ -80,6 +80,7 @@ ssh -p 20231 root@IP_VPS     # systemd, Docker, Nginx, /opt</code></pre>
 systemctl status sambal-joelid-api --no-pager
 curl -fsS https://api.joelid.hontalk.my.id/api/v1/health</code></pre>
           <div class="callout"><strong>Expected:</strong> script membuat backup, menjalankan <code>git pull --ff-only</code>, memasang dependency, memverifikasi binding native <code>better-sqlite3</code>, menjalankan test, lalu restart hanya jika seluruh tahap berhasil. Health mengembalikan <code>{"ok":true}</code>.</div>
+          <div class="callout"><strong>Ownership:</strong> deployment dijalankan sebagai root, tetapi Git dan npm dijalankan sebagai user <code>sambal</code>. Script memperbaiki ownership <code>node_modules</code> yang mungkin pernah dibuat oleh root agar <code>npm ci</code> tidak gagal dengan <code>EACCES</code>.</div>
           <div class="callout warn"><strong>Jika native build gagal:</strong> pasang toolchain sekali dengan <code>apt-get install -y build-essential python3</code>, lalu jalankan kembali script deployment. Jangan menghapus <code>package-lock.json</code> di VPS.</div>
         </section>
 

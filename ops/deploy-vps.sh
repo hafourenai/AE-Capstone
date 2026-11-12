@@ -23,6 +23,11 @@ echo "[3/7] Mengambil source terbaru"
 sudo -u "$APP_USER" git -C "$APP_DIR" pull --ff-only origin main
 
 echo "[4/7] Memasang dependency dan menjalankan native install scripts"
+if [[ -d "$APP_DIR/node_modules" ]]; then
+  echo "Memastikan ownership node_modules dimiliki $APP_USER"
+  chown -R "$APP_USER:$APP_USER" "$APP_DIR/node_modules"
+fi
+chown "$APP_USER:$APP_USER" "$APP_DIR/package-lock.json"
 sudo -u "$APP_USER" bash -lc "cd '$APP_DIR' && npm ci --foreground-scripts"
 
 echo "[5/7] Memverifikasi binding better-sqlite3"
