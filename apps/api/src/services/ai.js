@@ -24,6 +24,16 @@ const safeReplies = {
   UNKNOWN: 'Mohon jelaskan kebutuhan Anda, apakah ingin bertanya, membuat pesanan, atau menyampaikan keluhan.',
 };
 
+export function detectIntentHint(message) {
+  const text = message.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
+  if (/\b(admin|operator|manusia)\b/.test(text)) return 'HANDOFF';
+  if (/\b(keluhan|keluh|komplain|complain|kecewa|rusak|basi|salah pesanan)\b/.test(text)) return 'COMPLAINT';
+  if (/\b(pesan|pesen|psen|order|beli|mau makan|mknan|makanan)\b/.test(text)) return 'ORDER';
+  if (/\b(menu|daftar menu|harga)\b/.test(text)) return 'MENU';
+  if (/^(halo+|hai+|hi+|pagi|siang|sore|malam|ass?alamualaikum)[\s!,.]*$/.test(text.trim())) return 'GREETING';
+  return null;
+}
+
 const aiResponseFormat = {
   type: 'json_schema',
   json_schema: {
@@ -120,7 +130,7 @@ export class AIEngine {
   /**
    * Klasifikasi intent dan ekstraksi data dari pesan pelanggan
    */
-  async classifyIntent(customerMessage, catalogContext) {
+  async classifyIntent(customerMessage, catalogContext, history = []) {
     const systemPrompt = `Anda adalah AI asisten customer service untuk Sambal Joelid, sebuah restoran cepat saji.
 
 KATALOG MENU AKTIF:
@@ -136,7 +146,7 @@ INSTRUKSI:
 1. Klasifikasikan pesan ke salah satu intent: ORDER, COMPLAINT, GENERAL_QUESTION, HANDOFF, UNKNOWN.
 2. Jika ORDER: ekstrak branchId, items (menuId + quantity), dan notes opsional.
 3. Jika COMPLAINT: ekstrak deskripsi keluhan dan kategori (KUALITAS_MAKANAN, PELAYANAN, KEBERSIHAN, PESANAN, LAINNYA).
-4. Berikan replyText ramah dalam bahasa Indonesia yang sesuai intent.
+4. Berikan replyText natural, singkat, ramah, dan pahami singkatan/chat sehari-hari Indonesia (contoh: "sy mau psen mknan" berarti ingin ORDER).
 5. Output HARUS berupa JSON valid tanpa teks tambahan.
 
 FORMAT WAJIB:
@@ -145,7 +155,8 @@ FORMAT WAJIB:
 Semua output wajib memiliki intent, extractedData (gunakan {} bila kosong), dan replyText yang tidak kosong.
 
 Jangan mengarang menu, harga, atau cabang yang tidak ada dalam katalog.
-Jangan menentukan harga akhir order (backend yang akan kalkulasi).`;
+Jangan menentukan harga akhir order (backend yang akan kalkulasi).
+Jangan pernah menganggap permintaan membeli/memesan makanan sebagai keluhan.`;
 
     return this.processWithQueue(async () => {
       const controller = new AbortController();
@@ -162,6 +173,7 @@ Jangan menentukan harga akhir order (backend yang akan kalkulasi).`;
             model: this.model,
             messages: [
               { role: 'system', content: systemPrompt },
+              ...history.slice(-6).map(item => ({ role: item.sender_type === 'CUSTOMER' ? 'user' : 'assistant', content: item.content })),
               { role: 'user', content: customerMessage },
             ],
             temperature: 0.3,

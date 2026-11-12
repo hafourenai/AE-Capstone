@@ -10,8 +10,9 @@ import { Server } from 'socket.io';
 import { z } from 'zod';
 import { openDatabase, orderTransitions, complaintTransitions } from './database.js';
 import { WAHAClient } from './services/waha.js';
-import { AIEngine } from './services/ai.js';
+import { AIEngine, detectIntentHint } from './services/ai.js';
 import { OrderComplaintBridge } from './services/orderComplaintBridge.js';
+import { CatalogService } from './services/catalog.js';
 
 const env = {
   port: Number(process.env.PORT || 3001), dbPath: process.env.CUSTOMER_MODULE_DB_PATH || './data/customer-module.sqlite',
@@ -28,6 +29,12 @@ const env = {
   whatsappRateWindowMs: Number(process.env.WHATSAPP_RATE_LIMIT_WINDOW_SECONDS || 60) * 1000,
   whatsappRateMax: Number(process.env.WHATSAPP_RATE_LIMIT_MAX_MESSAGES || 8),
   whatsappRetentionDays: Number(process.env.WHATSAPP_MESSAGE_RETENTION_DAYS || 30),
+  adminPauseSeconds: Number(process.env.WHATSAPP_ADMIN_PAUSE_SECONDS || 180),
+  catalogUrl: process.env.MENU_CSV_URL || '',
+  catalogTtlMs: Number(process.env.MENU_CACHE_SECONDS || 60) * 1000,
+  bankName: process.env.PAYMENT_BANK_NAME || '',
+  bankAccount: process.env.PAYMENT_BANK_ACCOUNT || '',
+  bankHolder: process.env.PAYMENT_BANK_HOLDER || '',
 };
 if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'development-only-change-me')) {
   throw new Error('JWT_SECRET wajib diatur dengan nilai acak yang kuat pada production.');
@@ -42,6 +49,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: env.origins, methods: ['GET', 'POST'] } });
 const bridge = new OrderComplaintBridge(db, waha, io);
+const catalog = new CatalogService({ url: env.catalogUrl, ttlMs: env.catalogTtlMs, db });
 const messageRateBuckets = new Map();
 
 if (env.whatsappRetentionDays > 0) {
@@ -85,6 +93,21 @@ function isRateLimited(phoneNumber) {
 
 const rows = (sql, ...p) => db.prepare(sql).all(...p);
 const ref = (prefix) => `${prefix}-${new Date().toISOString().slice(0,10).replaceAll('-','')}-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
+const helpText = 'Halo kak! Selamat datang di Sambal Joelid 🌶️\n\nKetik *menu* untuk melihat menu, *pesan* untuk memesan, *keluhan* untuk menyampaikan kendala, atau *admin* untuk berbicara dengan staf.';
+const pauseUntil = () => new Date(Date.now() + env.adminPauseSeconds * 1000).toISOString().replace('T', ' ').slice(0, 19);
+
+function formatMenuList(menus) {
+  const available = menus.filter(menu => menu.active && menu.stock > 0);
+  return `🌶️ *Menu Sambal Joelid*\n\n${available.map(menu => `• ${menu.name} — Rp ${menu.price.toLocaleString('id-ID')} (stok ${menu.stock})`).join('\n')}\n\nKetik *pesan* diikuti menu dan jumlahnya, ya kak.`;
+}
+
+function resumeExpiredConversations() {
+  const expired = db.prepare("SELECT id FROM whatsapp_conversations WHERE state != 'AI_ACTIVE' AND paused_until IS NOT NULL AND paused_until <= CURRENT_TIMESTAMP").all();
+  if (!expired.length) return;
+  db.prepare("UPDATE whatsapp_conversations SET state='AI_ACTIVE', paused_until=NULL, updated_at=CURRENT_TIMESTAMP WHERE state != 'AI_ACTIVE' AND paused_until IS NOT NULL AND paused_until <= CURRENT_TIMESTAMP").run();
+  expired.forEach(({ id }) => io.to('admins').emit('whatsapp:conversation-updated', { conversationId: id, state: 'AI_ACTIVE' }));
+}
+setInterval(resumeExpiredConversations, 15_000).unref();
 
 async function handleIncomingMessage(wahaMessage) {
   // Filter: hanya personal chat, bukan group (@g.us), bukan status, bukan milik sendiri
@@ -129,7 +152,13 @@ async function handleIncomingMessage(wahaMessage) {
 }
 
 async function processMessage(conversationId, phone, chatId, message) {
-  const conv = db.prepare('SELECT state FROM whatsapp_conversations WHERE id = ?').get(conversationId);
+  let conv = db.prepare('SELECT state, paused_until FROM whatsapp_conversations WHERE id = ?').get(conversationId);
+
+  if (conv.state !== 'AI_ACTIVE' && conv.paused_until && new Date(conv.paused_until).getTime() <= Date.now()) {
+    db.prepare("UPDATE whatsapp_conversations SET state='AI_ACTIVE', paused_until=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(conversationId);
+    conv = { state: 'AI_ACTIVE', paused_until: null };
+    io.to('admins').emit('whatsapp:conversation-updated', { conversationId, state: 'AI_ACTIVE' });
+  }
 
   // Jika state WAITING_ADMIN atau ADMIN_ACTIVE, jangan proses dengan AI
   if (conv.state !== 'AI_ACTIVE') {
@@ -152,7 +181,10 @@ async function processMessage(conversationId, phone, chatId, message) {
         let response = '';
         if (pending.action_type === 'ORDER_CONFIRMATION') {
           const order = bridge.createOrderFromConfirmation(conversationId, payload.customerName, phone, payload.branchId, payload.items, payload.notes);
-          response = `✅ Pesanan Anda berhasil dibuat!\n\nNomor Referensi: *${order.reference}*\nTotal: Rp ${order.totalAmount.toLocaleString('id-ID')}\n\nTerima kasih telah memesan di Sambal Joelid!`;
+          const payment = env.bankName && env.bankAccount && env.bankHolder
+            ? `\n\n💳 *Informasi Transfer*\n${env.bankName} — ${env.bankAccount}\na.n. ${env.bankHolder}\n\nSetelah transfer, kirim bukti pembayaran ke chat ini.`
+            : '';
+          response = `✅ Pesanan Anda berhasil dibuat!\n\nNomor Referensi: *${order.reference}*\nTotal: Rp ${order.totalAmount.toLocaleString('id-ID')}${payment}\n\nTerima kasih telah memesan di Sambal Joelid!`;
         } else if (pending.action_type === 'COMPLAINT_CONFIRMATION') {
           const complaint = bridge.createComplaint(conversationId, payload.customerName, phone, payload.branchId, payload.category, payload.description);
           response = `✅ Keluhan Anda telah kami terima.\n\nNomor Referensi: *${complaint.reference}*\n\nTim kami akan menghubungi Anda segera untuk penyelesaian.`;
@@ -172,15 +204,29 @@ async function processMessage(conversationId, phone, chatId, message) {
     }
 
     // Panggil AI untuk klasifikasi
-    const menus = db.prepare('SELECT id, name, price FROM menus WHERE active = 1').all();
+    const menus = await catalog.getMenus();
     const branches = db.prepare('SELECT id, name FROM branches WHERE active = 1').all();
-
-    const aiResult = await ai.classifyIntent(message, { menus, branches });
+    const hint = detectIntentHint(message);
+    if (hint === 'GREETING') {
+      await waha.sendMessage(chatId, helpText);
+      db.prepare('INSERT INTO whatsapp_messages(conversation_id,waha_message_id,direction,sender_type,content) VALUES (?,?,?,?,?)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', helpText);
+      return;
+    }
+    if (hint === 'MENU') {
+      const response = formatMenuList(menus);
+      await waha.sendMessage(chatId, response);
+      db.prepare('INSERT INTO whatsapp_messages(conversation_id,waha_message_id,direction,sender_type,content) VALUES (?,?,?,?,?)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', response);
+      return;
+    }
+    const history = db.prepare('SELECT sender_type,content FROM whatsapp_messages WHERE conversation_id=? ORDER BY id DESC LIMIT 7').all(conversationId).reverse();
+    if (history.at(-1)?.sender_type === 'CUSTOMER' && history.at(-1)?.content === message) history.pop();
+    const aiResult = await ai.classifyIntent(message, { menus: menus.filter(menu => menu.active && menu.stock > 0), branches }, history);
+    if (hint && hint !== 'MENU' && hint !== 'GREETING') aiResult.intent = hint;
 
     // Cek handoff keywords
-    const handoffKeywords = ['admin', 'operator', 'manusia', 'bantuan', 'help'];
+    const handoffKeywords = ['admin', 'operator', 'manusia'];
     if (aiResult.intent === 'HANDOFF' || handoffKeywords.some(kw => message.toLowerCase().includes(kw))) {
-      db.prepare('UPDATE whatsapp_conversations SET state = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('WAITING_ADMIN', conversationId);
+      db.prepare('UPDATE whatsapp_conversations SET state=?, paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run('WAITING_ADMIN', pauseUntil(), conversationId);
       const response = '👋 Mohon tunggu, kami sedang menghubungkan Anda dengan tim admin kami...';
       await waha.sendMessage(chatId, response);
       db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(conversationId, `outbound-${Date.now()}`, 'OUTBOUND', 'AI', response);
@@ -189,6 +235,9 @@ async function processMessage(conversationId, phone, chatId, message) {
     }
 
     let response = aiResult.replyText;
+    if (hint === 'ORDER' && !aiResult.extractedData?.items?.length) {
+      response = 'Siap kak, mau pesan menu apa dan berapa jumlahnya? Ketik *menu* untuk melihat daftar menu yang tersedia.';
+    }
 
     // Jika ORDER, buat pending action untuk konfirmasi
     if (aiResult.intent === 'ORDER' && aiResult.extractedData?.items?.length > 0) {
@@ -209,7 +258,7 @@ async function processMessage(conversationId, phone, chatId, message) {
       } catch (e) {
         console.error('[ORDER] Validasi gagal:', e.message);
         response = `❌ Maaf, ada masalah dengan pesanan Anda. Pesan Anda telah kami teruskan ke admin untuk ditangani.`;
-        db.prepare('UPDATE whatsapp_conversations SET state = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('WAITING_ADMIN', conversationId);
+        db.prepare('UPDATE whatsapp_conversations SET state=?, paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run('WAITING_ADMIN', pauseUntil(), conversationId);
       }
     } else if (aiResult.intent === 'COMPLAINT') {
       const description = (aiResult.extractedData?.complaintDescription || message).trim().slice(0, 2000);
@@ -234,7 +283,7 @@ async function processMessage(conversationId, phone, chatId, message) {
   } catch (error) {
     console.error('[AI] Error:', error.message);
     const fallback = `⏳ Mohon maaf, sistem kami sedang sibuk. Pesan Anda telah kami teruskan ke admin untuk ditangani.`;
-    db.prepare('UPDATE whatsapp_conversations SET state = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('WAITING_ADMIN', conversationId);
+    db.prepare('UPDATE whatsapp_conversations SET state=?, paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run('WAITING_ADMIN', pauseUntil(), conversationId);
     try {
       await waha.sendMessage(chatId, fallback);
       db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', fallback);
@@ -252,14 +301,18 @@ api.post('/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), (req
   if (req.body?.email !== env.email || req.body?.password !== env.password) return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Email atau kata sandi tidak tepat.' });
   res.json({ token: jwt.sign({ role: 'ADMIN', email: env.email }, env.jwtSecret, { expiresIn: '8h' }) });
 });
-api.get('/public/menu', (_, res) => res.json(rows('SELECT id,name,price FROM menus WHERE active=1 ORDER BY name')));
+api.get('/public/menu', async (_, res) => {
+  const menus = await catalog.getMenus();
+  res.json(menus.filter(menu => menu.active && menu.stock > 0).sort((a, b) => a.name.localeCompare(b.name)));
+});
 api.get('/public/branches', (_, res) => res.json(rows('SELECT id,name FROM branches WHERE active=1 ORDER BY name')));
 api.post('/public/orders', publicLimiter, validate(orderInput), (req, res) => {
   const create = db.transaction((input) => {
     if (!db.prepare('SELECT 1 FROM branches WHERE id=? AND active=1').get(input.branchId)) throw new Error('BRANCH_NOT_FOUND');
     const unique = [...new Map(input.items.map(i => [i.menuId, i])).values()];
-    const menus = unique.map(i => ({ ...i, menu: db.prepare('SELECT id,name,price FROM menus WHERE id=? AND active=1').get(i.menuId) }));
+    const menus = unique.map(i => ({ ...i, menu: db.prepare('SELECT id,name,price,stock FROM menus WHERE id=? AND active=1 AND stock>0').get(i.menuId) }));
     if (menus.some(i => !i.menu)) throw new Error('MENU_NOT_FOUND');
+    if (menus.some(i => i.quantity > i.menu.stock)) throw new Error('INSUFFICIENT_STOCK');
     const total = menus.reduce((sum, i) => sum + i.menu.price * i.quantity, 0); const reference = ref('ORD');
     const result = db.prepare('INSERT INTO customer_orders(reference_number,customer_name,customer_phone,branch_id,notes,total_amount,status) VALUES (?,?,?,?,?,?,?)').run(reference, input.customerName, input.customerPhone, input.branchId, input.notes || null, total, 'NEW');
     const add = db.prepare('INSERT INTO customer_order_items(order_id,menu_id,menu_name_snapshot,unit_price_snapshot,quantity,subtotal) VALUES (?,?,?,?,?,?)');
@@ -279,7 +332,7 @@ api.get('/admin/complaints', auth, listRoute('customer_complaints'));
 api.get('/admin/complaints/:id', auth, (req,res) => { const item = db.prepare('SELECT * FROM customer_complaints WHERE id=?').get(req.params.id); item ? res.json(item) : res.sendStatus(404); });
 api.patch('/admin/complaints/:id/status', auth, validate(z.object({ status: z.enum(['NEW','IN_REVIEW','IN_PROGRESS','RESOLVED','CLOSED']) })), (req,res) => updateStatus('customer_complaints', complaintTransitions, 'complaint:updated', req,res));
 api.patch('/admin/complaints/:id/notes', auth, validate(z.object({ adminNotes: z.string().trim().max(2000).nullable() })), (req,res) => { const result = db.prepare("UPDATE customer_complaints SET admin_notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(req.body.adminNotes, req.params.id); if (!result.changes) return res.sendStatus(404); io.to('admins').emit('complaint:updated', { id: Number(req.params.id) }); res.sendStatus(204); });
-function updateStatus(table, transitions, event, req, res) { const item = db.prepare(`SELECT id,status FROM ${table} WHERE id=?`).get(req.params.id); if (!item) return res.sendStatus(404); if (!transitions[item.status].includes(req.body.status)) return res.status(409).json({ error: 'INVALID_STATUS_TRANSITION' }); db.prepare(`UPDATE ${table} SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(req.body.status, item.id); io.to('admins').emit(event, { id: item.id, status: req.body.status }); res.sendStatus(204); }
+function updateStatus(table, _transitions, event, req, res) { const item = db.prepare(`SELECT id,status FROM ${table} WHERE id=?`).get(req.params.id); if (!item) return res.sendStatus(404); db.prepare(`UPDATE ${table} SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(req.body.status, item.id); io.to('admins').emit(event, { id: item.id, status: req.body.status }); res.sendStatus(204); }
 
 // WhatsApp Webhook
 api.post('/integrations/waha/webhook', async (req, res) => {
@@ -354,9 +407,12 @@ api.post('/admin/whatsapp/conversations/:id/messages', auth, validate(z.object({
 
     // Simpan message sebagai ADMIN
     db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(req.params.id, `admin-${crypto.randomUUID()}`, 'OUTBOUND', 'ADMIN', content);
+    const pausedUntil = pauseUntil();
+    db.prepare("UPDATE whatsapp_conversations SET state='ADMIN_ACTIVE', paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(pausedUntil, req.params.id);
 
     io.to('admins').emit('whatsapp:message-received', { conversationId: req.params.id, sender: 'ADMIN' });
-    res.status(201).json({ ok: true });
+    io.to('admins').emit('whatsapp:conversation-updated', { conversationId: req.params.id, state: 'ADMIN_ACTIVE', pausedUntil });
+    res.status(201).json({ ok: true, state: 'ADMIN_ACTIVE', pausedUntil });
   } catch (error) {
     console.error('[Admin Message Error]', error);
     res.status(500).json({ error: 'MESSAGE_SEND_FAILED' });
@@ -365,7 +421,8 @@ api.post('/admin/whatsapp/conversations/:id/messages', auth, validate(z.object({
 
 api.patch('/admin/whatsapp/conversations/:id/state', auth, validate(z.object({ state: z.enum(['AI_ACTIVE', 'WAITING_ADMIN', 'ADMIN_ACTIVE']) })), (req, res) => {
   const { state } = req.body;
-  const result = db.prepare('UPDATE whatsapp_conversations SET state = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(state, req.params.id);
+  const pausedUntil = state === 'AI_ACTIVE' ? null : pauseUntil();
+  const result = db.prepare('UPDATE whatsapp_conversations SET state=?, paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run(state, pausedUntil, req.params.id);
   if (!result.changes) return res.sendStatus(404);
 
   io.to('admins').emit('whatsapp:conversation-updated', { conversationId: req.params.id, state });

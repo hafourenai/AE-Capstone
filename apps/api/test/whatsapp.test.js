@@ -6,7 +6,8 @@ import test from 'node:test';
 import { openDatabase } from '../src/database.js';
 import { OrderComplaintBridge } from '../src/services/orderComplaintBridge.js';
 import { WAHAClient } from '../src/services/waha.js';
-import { normalizeAIOutput } from '../src/services/ai.js';
+import { detectIntentHint, normalizeAIOutput } from '../src/services/ai.js';
+import { normalizeCatalogCsv } from '../src/services/catalog.js';
 
 function temporaryDatabase(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sambal-joelid-'));
@@ -93,4 +94,15 @@ test('invalid extracted AI data is discarded instead of failing the conversation
     extractedData: { items: [{ menuId: 'ayam-geprek', quantity: 0 }] },
   });
   assert.deepEqual(output, { intent: 'ORDER', replyText: 'Silakan sebutkan menu, jumlah, dan cabang yang Anda pilih agar pesanan dapat kami rangkum.' });
+});
+
+test('slang order text cannot be mistaken for a complaint', () => {
+  assert.equal(detectIntentHint('sy mau psen mknan'), 'ORDER');
+  assert.equal(detectIntentHint('mau pesen ayam'), 'ORDER');
+  assert.equal(detectIntentHint('menu'), 'MENU');
+});
+
+test('Google Sheets CSV fields are normalized including stock and aliases', () => {
+  const [menu] = normalizeCatalogCsv('kode,nama,harga,stok,aktif,deskripsi,alias\nREG_AYAM,Paket Ayam,20300,5,TRUE,"Nasi, Ayam",paket ayam|ayam reguler');
+  assert.deepEqual(menu, { id: 'REG_AYAM', name: 'Paket Ayam', price: 20300, stock: 5, active: true, description: 'Nasi, Ayam', aliases: ['paket ayam', 'ayam reguler'] });
 });

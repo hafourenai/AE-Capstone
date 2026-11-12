@@ -78,6 +78,13 @@ export function openDatabase(filename) {
   if (!conversationColumns.some(col => col.name === 'chat_id')) {
     db.exec('ALTER TABLE whatsapp_conversations ADD COLUMN chat_id TEXT');
   }
+  if (!conversationColumns.some(col => col.name === 'paused_until')) {
+    db.exec('ALTER TABLE whatsapp_conversations ADD COLUMN paused_until TEXT');
+  }
+  const menuColumns = db.prepare("PRAGMA table_info(menus)").all();
+  if (!menuColumns.some(col => col.name === 'stock')) db.exec('ALTER TABLE menus ADD COLUMN stock INTEGER NOT NULL DEFAULT 999');
+  if (!menuColumns.some(col => col.name === 'description')) db.exec("ALTER TABLE menus ADD COLUMN description TEXT NOT NULL DEFAULT ''");
+  if (!menuColumns.some(col => col.name === 'aliases')) db.exec("ALTER TABLE menus ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'");
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_wa_conv_chat_id ON whatsapp_conversations(chat_id)');
 
   const count = db.prepare('SELECT COUNT(*) AS count FROM menus').get().count;

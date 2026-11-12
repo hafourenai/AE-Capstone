@@ -24,10 +24,11 @@ function SourceBadge({ source }) {
 }
 
 function WhatsAppChat({ token, conversationId, onClose }) {
-  const [messages, setMessages] = useState([]), [newMsg, setNewMsg] = useState(''), [loading, setLoading] = useState(false);
+  const [messages, setMessages] = useState([]), [newMsg, setNewMsg] = useState(''), [loading, setLoading] = useState(false), [state, setState] = useState('AI_ACTIVE'), [error, setError] = useState('');
   useEffect(() => {
     request(`/admin/whatsapp/conversations/${conversationId}`, { headers: { Authorization: `Bearer ${token}` } }).then(conv => {
       setMessages(conv.messages || []);
+      setState(conv.state);
     }).catch(e => console.error(e));
   }, [conversationId, token]);
 
@@ -36,15 +37,16 @@ function WhatsAppChat({ token, conversationId, onClose }) {
     if (!newMsg.trim()) return;
     setLoading(true);
     try {
-      await request(`/admin/whatsapp/conversations/${conversationId}/messages`, {
+      const result = await request(`/admin/whatsapp/conversations/${conversationId}/messages`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: JSON.stringify({ content: newMsg }),
       });
       setMessages([...messages, { sender_type: 'ADMIN', content: newMsg, created_at: new Date().toISOString() }]);
+      setState(result.state);
       setNewMsg('');
     } catch (e) {
-      console.error(e);
+      setError(e.message);
     } finally {
       setLoading(false);
     }
@@ -53,10 +55,12 @@ function WhatsAppChat({ token, conversationId, onClose }) {
   return (
     <aside style={{ display: 'flex', flexDirection: 'column', gap: '1em', maxHeight: '80vh', overflow: 'hidden' }}>
       <button onClick={onClose} style={{ alignSelf: 'flex-end' }}>✕ Tutup</button>
+      <div><strong>Mode: {state}</strong>{state !== 'AI_ACTIVE' && <button type="button" onClick={async () => { try { await request(`/admin/whatsapp/conversations/${conversationId}/state`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify({ state: 'AI_ACTIVE' }) }); setState('AI_ACTIVE'); setError(''); } catch (e) { setError(e.message); } }} style={{ marginLeft: '1em' }}>Aktifkan AI sekarang</button>}</div>
+      {error && <p className="error">{error}</p>}
       <div style={{ flex: 1, overflowY: 'auto', borderBottom: '1px solid #ddd', paddingBottom: '1em' }}>
         {messages.map((msg, i) => (
           <div key={i} style={{ marginBottom: '0.5em', fontSize: '0.9em', color: msg.sender_type === 'ADMIN' ? '#0084ff' : '#333' }}>
-            <strong>{msg.sender_type === 'ADMIN' ? 'Anda' : 'Pelanggan'}:</strong> {msg.content}
+            <strong>{msg.sender_type === 'ADMIN' ? 'Admin' : msg.sender_type === 'AI' ? 'AI' : 'Pelanggan'}:</strong> {msg.content}
           </div>
         ))}
       </div>
@@ -140,28 +144,33 @@ function Admin() {
     setDetail(await request(endpoint, { headers: { Authorization: `Bearer ${token}` } }));
   };
   const change = async e => {
-    if (kind === 'whatsapp') {
+    try {
+      setError('');
+      if (kind === 'whatsapp') {
       await request(`/admin/whatsapp/conversations/${detail.id}/state`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}` },
         body: JSON.stringify({ state: e.target.value }),
       });
       setDetail({ ...detail, state: e.target.value });
-    } else {
+      } else {
       await request(`/admin/${kind}/${detail.id}/status`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}` },
         body: JSON.stringify({ status: e.target.value }),
       });
       setDetail({ ...detail, status: e.target.value });
+      }
+      load();
+    } catch (changeError) {
+      setError(changeError.message);
     }
-    load();
   };
 
   if (chatConv) return <section className="admin"><WhatsAppChat token={token} conversationId={chatConv.id} onClose={() => setChatConv(null)} /></section>;
 
   return (
-    <section className="admin">
+      <section className="admin">
       <header>
         <span className="stamp">SJ</span>
         <div>
@@ -183,6 +192,7 @@ function Admin() {
           WhatsApp
         </button>
       </nav>
+      {error && <p className="error">{error}</p>}
       <div className="admin-grid">
         <div className="table">
           {data.map(x => (

@@ -44,9 +44,10 @@ export class OrderComplaintBridge {
 
     // Validasi dan ambil harga dari master
     const enrichedItems = deduped.map(item => {
-      const menu = this.db.prepare('SELECT id, name, price FROM menus WHERE id = ? AND active = 1').get(item.menuId);
+      const menu = this.db.prepare('SELECT id, name, price, stock FROM menus WHERE id = ? AND active = 1 AND stock > 0').get(item.menuId);
       if (!menu) throw new Error(`MENU_NOT_FOUND: ${item.menuId}`);
       if (item.quantity < 1 || item.quantity > 99) throw new Error('INVALID_QUANTITY');
+      if (item.quantity > menu.stock) throw new Error(`INSUFFICIENT_STOCK: ${item.menuId}`);
       return { ...item, menu };
     });
 
