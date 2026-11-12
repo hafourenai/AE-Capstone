@@ -5,7 +5,17 @@ import './style.css';
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api/v1';
 const currency = (v) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(v);
-const request = async (path, options = {}) => { const response = await fetch(`${API}${path}`, { headers: { 'Content-Type': 'application/json', ...options.headers }, ...options }); if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || 'Permintaan gagal'); return response.status === 204 ? null : response.json(); };
+const request = async (path, options = {}) => {
+  const response = await fetch(`${API}${path}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...options.headers },
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.message || payload.error || `Permintaan gagal (${response.status})`);
+  }
+  return response.status === 204 ? null : response.json();
+};
 
 function Customer({ mode, setMode }) {
   const [menus, setMenus] = useState([]), [branches, setBranches] = useState([]), [sent, setSent] = useState(null), [error, setError] = useState('');
@@ -169,105 +179,57 @@ function Admin() {
 
   if (chatConv) return <section className="admin"><WhatsAppChat token={token} conversationId={chatConv.id} onClose={() => setChatConv(null)} /></section>;
 
+  const title = kind === 'orders' ? 'Pesanan' : kind === 'complaints' ? 'Keluhan' : 'Percakapan WhatsApp';
+  const newCount = data.filter(item => ['NEW', 'WAITING_ADMIN'].includes(item.status || item.state)).length;
+  const activeCount = data.filter(item => ['CONFIRMED', 'PROCESSING', 'IN_REVIEW', 'IN_PROGRESS', 'ADMIN_ACTIVE'].includes(item.status || item.state)).length;
+  const statusLabel = value => ({ NEW: 'Baru', CONFIRMED: 'Dikonfirmasi', PROCESSING: 'Diproses', COMPLETED: 'Selesai', CANCELLED: 'Dibatalkan', IN_REVIEW: 'Ditinjau', IN_PROGRESS: 'Ditangani', RESOLVED: 'Terselesaikan', CLOSED: 'Ditutup', AI_ACTIVE: 'AI aktif', WAITING_ADMIN: 'Menunggu admin', ADMIN_ACTIVE: 'Admin aktif' }[value] || value);
+
   return (
-      <section className="admin">
-      <header>
-        <span className="stamp">SJ</span>
-        <div>
-          <p className="eyebrow">ADMIN</p>
-          <h2>Meja kendali</h2>
+    <section className="admin-shell">
+      <aside className="admin-sidebar">
+        <div className="admin-brand"><span>SJ</span><div><b>Sambal Joelid</b><small>Operations</small></div></div>
+        <nav>
+          <button className={kind === 'orders' ? 'active' : ''} onClick={() => { setKind('orders'); setDetail(null); }}><span>▰</span> Pesanan <i>{kind === 'orders' ? data.length : ''}</i></button>
+          <button className={kind === 'complaints' ? 'active' : ''} onClick={() => { setKind('complaints'); setDetail(null); }}><span>◉</span> Keluhan <i>{kind === 'complaints' ? data.length : ''}</i></button>
+          <button className={kind === 'whatsapp' ? 'active' : ''} onClick={() => { setKind('whatsapp'); setDetail(null); }}><span>◌</span> WhatsApp <i>{kind === 'whatsapp' ? data.length : ''}</i></button>
+        </nav>
+        <div className="sidebar-foot"><span className="online-dot" /> Sistem online<button onClick={() => { localStorage.removeItem('token'); setToken(''); }}>Keluar →</button></div>
+      </aside>
+      <div className="admin-workspace">
+        <header className="admin-topbar"><div><p className="eyebrow">SAMBAL JOELID / ADMIN</p><h1>Dashboard Admin</h1><p>Pantau pesanan, keluhan, dan percakapan pelanggan secara real-time.</p></div><div className="admin-profile"><span>AD</span><b>Admin</b></div></header>
+        <div className="metric-grid">
+          <article><small>Data {title}</small><strong>{data.length}</strong><span>Total saat ini</span></article>
+          <article><small>Perlu perhatian</small><strong>{newCount}</strong><span>Baru atau menunggu</span></article>
+          <article><small>Sedang aktif</small><strong>{activeCount}</strong><span>Dalam penanganan</span></article>
         </div>
-        <button className="logout" onClick={() => { localStorage.removeItem('token'); setToken(''); }}>
-          Keluar
-        </button>
-      </header>
-      <nav>
-        <button className={kind === 'orders' ? 'active' : ''} onClick={() => { setKind('orders'); setDetail(null); }}>
-          Pesanan
-        </button>
-        <button className={kind === 'complaints' ? 'active' : ''} onClick={() => { setKind('complaints'); setDetail(null); }}>
-          Keluhan
-        </button>
-        <button className={kind === 'whatsapp' ? 'active' : ''} onClick={() => { setKind('whatsapp'); setDetail(null); }}>
-          WhatsApp
-        </button>
-      </nav>
-      {error && <p className="error">{error}</p>}
-      <div className="admin-grid">
-        <div className="table">
-          {data.map(x => (
-            <button className="row" key={x.id} onClick={() => { open(x.id); setChatConv(null); }}>
-              <b>{x.reference_number || x.phone}</b>
-              <span>
-                {x.customer_name || 'Chat WhatsApp'} {kind !== 'whatsapp' && <>· {x.branch_name || '—'}</>}
-              </span>
-              <em>
-                {x.status || x.state} {kind !== 'whatsapp' && x.source && <SourceBadge source={x.source} />}
-              </em>
-            </button>
-          ))}
-          {!data.length && <p>Belum ada data.</p>}
+        {error && <p className="error">{error}</p>}
+        <div className={`admin-panel ${detail ? 'has-detail' : ''}`}>
+          <section className="data-panel">
+            <div className="panel-heading"><div><p className="eyebrow">MEJA OPERASIONAL</p><h2>{title}</h2></div><span>{data.length} data</span></div>
+            <div className="table-head"><span>Referensi</span><span>Pelanggan / Cabang</span><span>Status</span></div>
+            <div className="table">
+              {data.map(x => <button className={`row ${detail?.id === x.id ? 'selected' : ''}`} key={x.id} onClick={() => { open(x.id); setChatConv(null); }}>
+                <b>{x.reference_number || `+${x.phone}`}</b>
+                <span>{x.customer_name || 'Pelanggan WhatsApp'}<small>{kind !== 'whatsapp' ? x.branch_name || 'Tanpa cabang' : 'Percakapan langsung'}</small></span>
+                <em className={`status-badge status-${(x.status || x.state).toLowerCase()}`}>{statusLabel(x.status || x.state)}</em>
+              </button>)}
+              {!data.length && <div className="empty-state"><b>Belum ada data</b><span>Data baru akan muncul otomatis di sini.</span></div>}
+            </div>
+          </section>
+          {detail && <aside className="detail-panel">
+            <div className="detail-heading"><div><p className="eyebrow">DETAIL</p><h3>{detail.reference_number || `+${detail.phone}`}</h3></div><button onClick={() => setDetail(null)}>×</button></div>
+            <div className="customer-card"><small>Pelanggan</small><b>{detail.customer_name || 'Pelanggan WhatsApp'}</b><span>{detail.customer_phone || detail.phone}</span></div>
+            {detail.items?.length > 0 && <div className="order-items"><small>Rincian pesanan</small>{detail.items.map(i => <div key={i.id}><span>{i.menu_name_snapshot} × {i.quantity}</span><b>{currency(i.subtotal)}</b></div>)}</div>}
+            {kind === 'whatsapp' ? <>
+              <label>Mode percakapan<select value={detail.state} onChange={change}><option value="AI_ACTIVE">AI aktif</option><option value="WAITING_ADMIN">Menunggu admin</option><option value="ADMIN_ACTIVE">Admin aktif</option></select></label>
+              <p className="field-help">Mode admin bersifat sementara. AI akan aktif kembali otomatis setelah jeda berakhir.</p>
+              <button className="primary-action" onClick={() => setChatConv(detail)}>Buka percakapan →</button>
+            </> : <>
+              <label>Status<select value={detail.status} onChange={change}>{status.map(s => <option value={s} key={s}>{statusLabel(s)}</option>)}</select></label>
+              {kind === 'complaints' && <label>Catatan internal<textarea defaultValue={detail.admin_notes || ''} onBlur={async e => { try { await request(`/admin/complaints/${detail.id}/notes`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify({ adminNotes: e.target.value || null }) }); } catch (noteError) { setError(noteError.message); } }} /></label>}
+            </>}
+          </aside>}
         </div>
-        {detail && (
-          <aside>
-            <p className="eyebrow">DETAIL</p>
-            <h3>{detail.reference_number || detail.phone}</h3>
-            <p>
-              {detail.customer_name}<br />
-              {detail.customer_phone}
-            </p>
-            {detail.items && (
-              <ul>
-                {detail.items.map(i => (
-                  <li key={i.id}>
-                    {i.menu_name_snapshot} × {i.quantity} — {currency(i.subtotal)}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {kind === 'whatsapp' ? (
-              <>
-                <label>
-                  State
-                  <select value={detail.state} onChange={change}>
-                    <option>AI_ACTIVE</option>
-                    <option>WAITING_ADMIN</option>
-                    <option>ADMIN_ACTIVE</option>
-                  </select>
-                </label>
-                <button onClick={() => setChatConv(detail)} style={{ width: '100%', marginTop: '1em' }}>
-                  💬 Buka Chat
-                </button>
-              </>
-            ) : (
-              <>
-                <label>
-                  Status
-                  <select value={detail.status} onChange={change}>
-                    {status.map(s => (
-                      <option key={s}>{s}</option>
-                    ))}
-                  </select>
-                </label>
-                {kind === 'complaints' && (
-                  <label>
-                    Catatan internal
-                    <textarea
-                      defaultValue={detail.admin_notes || ''}
-                      onBlur={async e => {
-                        await request(`/admin/complaints/${detail.id}/notes`, {
-                          method: 'PATCH',
-                          headers: { Authorization: `Bearer ${token}` },
-                          body: JSON.stringify({ adminNotes: e.target.value || null }),
-                        });
-                      }}
-                    />
-                  </label>
-                )}
-              </>
-            )}
-          </aside>
-        )}
       </div>
     </section>
   );
@@ -276,7 +238,7 @@ function Admin() {
 function App() {
   const [tab, setTab] = useState('customer'), [mode, setMode] = useState('home');
   return (
-    <main>
+    <main className={tab === 'admin' ? 'admin-main' : ''}>
       <div className="tabs">
         <button className={tab === 'customer' ? 'selected' : ''} onClick={() => setTab('customer')}>
           Untuk pelanggan
