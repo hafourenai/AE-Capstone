@@ -46,6 +46,12 @@ export function openDatabase(filename) {
     db.exec("ALTER TABLE customer_complaints ADD COLUMN source TEXT NOT NULL DEFAULT 'WEB' CHECK(source IN ('WEB','WHATSAPP'))");
     db.exec("CREATE INDEX IF NOT EXISTS idx_complaints_source ON customer_complaints(source)");
   }
+  if (!orderColumns.some(col => col.name === 'whatsapp_conversation_id')) {
+    db.exec('ALTER TABLE customer_orders ADD COLUMN whatsapp_conversation_id INTEGER REFERENCES whatsapp_conversations(id)');
+  }
+  if (!complaintColumns.some(col => col.name === 'whatsapp_conversation_id')) {
+    db.exec('ALTER TABLE customer_complaints ADD COLUMN whatsapp_conversation_id INTEGER REFERENCES whatsapp_conversations(id)');
+  }
 
   // Tabel WhatsApp baru
   db.exec(`

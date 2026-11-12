@@ -71,9 +71,9 @@ export class OrderComplaintBridge {
       const reference = this.generateRef('ORD');
       const result = this.db
         .prepare(
-          'INSERT INTO customer_orders(reference_number, customer_name, customer_phone, branch_id, notes, total_amount, status, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+          'INSERT INTO customer_orders(reference_number, customer_name, customer_phone, branch_id, notes, total_amount, status, source, whatsapp_conversation_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
         )
-        .run(reference, customerName, customerPhone, branchId, notes || null, totalAmount, 'NEW', 'WHATSAPP');
+        .run(reference, customerName, customerPhone, branchId, notes || null, totalAmount, 'NEW', 'WHATSAPP', conversationId);
 
       const orderId = result.lastInsertRowid;
       const addItem = this.db.prepare(
@@ -113,9 +113,9 @@ export class OrderComplaintBridge {
       const reference = this.generateRef('CMP');
       const result = this.db
         .prepare(
-          'INSERT INTO customer_complaints(reference_number, customer_name, customer_phone, branch_id, category, description, status, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+          'INSERT INTO customer_complaints(reference_number, customer_name, customer_phone, branch_id, category, description, status, source, whatsapp_conversation_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
         )
-        .run(reference, customerName, customerPhone, branchId || null, category || null, description, 'NEW', 'WHATSAPP');
+        .run(reference, customerName, customerPhone, branchId || null, category || null, description, 'NEW', 'WHATSAPP', conversationId);
 
       const complaint = { id: result.lastInsertRowid, reference };
       // Emit socket event ke admin

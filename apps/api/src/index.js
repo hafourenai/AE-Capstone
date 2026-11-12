@@ -51,6 +51,7 @@ const io = new Server(server, { cors: { origin: env.origins, methods: ['GET', 'P
 const bridge = new OrderComplaintBridge(db, waha, io);
 const catalog = new CatalogService({ url: env.catalogUrl, ttlMs: env.catalogTtlMs, db });
 const messageRateBuckets = new Map();
+let lastWebhookAt = null;
 
 if (env.whatsappRetentionDays > 0) {
   db.prepare("DELETE FROM whatsapp_messages WHERE created_at < datetime('now', ?)")
@@ -282,7 +283,7 @@ async function processMessage(conversationId, phone, chatId, message) {
     db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(conversationId, `outbound-${Date.now()}`, 'OUTBOUND', 'AI', response);
   } catch (error) {
     console.error('[AI] Error:', error.message);
-    const fallback = `⏳ Mohon maaf, sistem kami sedang sibuk. Pesan Anda telah kami teruskan ke admin untuk ditangani.`;
+    const fallback = `⏳ Mohon maaf, layanan otomatis kami sedang mengalami kendala operasional. Pesan Anda sudah dicatat, tetapi penanganan mungkin memerlukan waktu lebih lama. Silakan coba lagi beberapa saat atau hubungi admin.`;
     db.prepare('UPDATE whatsapp_conversations SET state=?, paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run('WAITING_ADMIN', pauseUntil(), conversationId);
     try {
       await waha.sendMessage(chatId, fallback);
@@ -326,10 +327,10 @@ api.post('/public/complaints', publicLimiter, validate(complaintInput), (req, re
 });
 function listRoute(table) { return (req, res) => { const { q = '', status = '', branchId = '', page = '1' } = req.query; const offset = (Math.max(1, Number(page)) - 1) * 20; const where = [`(reference_number LIKE @q OR customer_name LIKE @q)`]; const params = { q: `%${q}%`, limit: 20, offset }; if (status) { where.push('status=@status'); params.status = status; } if (branchId) { where.push('branch_id=@branchId'); params.branchId = branchId; } const clause = where.join(' AND '); const data = rows(`SELECT t.*, b.name AS branch_name FROM ${table} t LEFT JOIN branches b ON b.id=t.branch_id WHERE ${clause} ORDER BY t.created_at DESC LIMIT @limit OFFSET @offset`, params); const total = db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${clause}`).get(params).count; res.json({ data, total, page: Number(page) }); }; }
 api.get('/admin/orders', auth, listRoute('customer_orders'));
-api.get('/admin/orders/:id', auth, (req,res) => { const order = db.prepare('SELECT * FROM customer_orders WHERE id=?').get(req.params.id); if (!order) return res.sendStatus(404); order.items = rows('SELECT * FROM customer_order_items WHERE order_id=?', order.id); res.json(order); });
+api.get('/admin/orders/:id', auth, (req,res) => { const order = db.prepare("SELECT o.*, COALESCE(o.whatsapp_conversation_id, c.id) AS conversation_id FROM customer_orders o LEFT JOIN whatsapp_conversations c ON o.source='WHATSAPP' AND c.phone=o.customer_phone WHERE o.id=?").get(req.params.id); if (!order) return res.sendStatus(404); order.items = rows('SELECT * FROM customer_order_items WHERE order_id=?', order.id); res.json(order); });
 api.patch('/admin/orders/:id/status', auth, validate(z.object({ status: z.enum(['NEW','CONFIRMED','PROCESSING','COMPLETED','CANCELLED']) })), (req,res) => updateStatus('customer_orders', orderTransitions, 'order:updated', req,res));
 api.get('/admin/complaints', auth, listRoute('customer_complaints'));
-api.get('/admin/complaints/:id', auth, (req,res) => { const item = db.prepare('SELECT * FROM customer_complaints WHERE id=?').get(req.params.id); item ? res.json(item) : res.sendStatus(404); });
+api.get('/admin/complaints/:id', auth, (req,res) => { const item = db.prepare("SELECT x.*, COALESCE(x.whatsapp_conversation_id, c.id) AS conversation_id FROM customer_complaints x LEFT JOIN whatsapp_conversations c ON x.source='WHATSAPP' AND c.phone=x.customer_phone WHERE x.id=?").get(req.params.id); item ? res.json(item) : res.sendStatus(404); });
 api.patch('/admin/complaints/:id/status', auth, validate(z.object({ status: z.enum(['NEW','IN_REVIEW','IN_PROGRESS','RESOLVED','CLOSED']) })), (req,res) => updateStatus('customer_complaints', complaintTransitions, 'complaint:updated', req,res));
 api.patch('/admin/complaints/:id/notes', auth, validate(z.object({ adminNotes: z.string().trim().max(2000).nullable() })), (req,res) => { const result = db.prepare("UPDATE customer_complaints SET admin_notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(req.body.adminNotes, req.params.id); if (!result.changes) return res.sendStatus(404); io.to('admins').emit('complaint:updated', { id: Number(req.params.id) }); res.sendStatus(204); });
 function updateStatus(table, _transitions, event, req, res) { const item = db.prepare(`SELECT id,status FROM ${table} WHERE id=?`).get(req.params.id); if (!item) return res.sendStatus(404); db.prepare(`UPDATE ${table} SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(req.body.status, item.id); io.to('admins').emit(event, { id: item.id, status: req.body.status }); res.sendStatus(204); }
@@ -344,6 +345,7 @@ api.post('/integrations/waha/webhook', async (req, res) => {
     }
 
     const wahaMessage = req.body;
+    lastWebhookAt = new Date().toISOString();
 
     // Handle message event
     if (wahaMessage.event === 'message' && wahaMessage.session === env.wahaSession) {
@@ -360,6 +362,20 @@ api.post('/integrations/waha/webhook', async (req, res) => {
   } catch (error) {
     console.error('[Webhook Error]', error);
     res.status(500).json({ error: 'WEBHOOK_PROCESSING_ERROR' });
+  }
+});
+
+api.get('/admin/integrations/health', auth, async (_req, res) => {
+  const latestInbound = db.prepare("SELECT MAX(created_at) AS value FROM whatsapp_messages WHERE direction='INBOUND'").get().value;
+  const webhookSeenAt = lastWebhookAt || latestInbound;
+  try {
+    const sessions = await Promise.race([
+      waha.checkHealth(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('WAHA_TIMEOUT')), 4000)),
+    ]);
+    res.json({ waha: 'ONLINE', webhook: webhookSeenAt ? 'RECEIVING' : 'UNKNOWN', lastWebhookAt: webhookSeenAt, sessions: Array.isArray(sessions) ? sessions.length : undefined });
+  } catch (error) {
+    res.status(503).json({ waha: 'OFFLINE', webhook: 'DEGRADED', lastWebhookAt: webhookSeenAt, message: 'Integrasi WhatsApp sedang bermasalah. Periksa WAHA dan konfigurasi webhook.' });
   }
 });
 

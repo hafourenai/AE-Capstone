@@ -37,6 +37,7 @@ test('WhatsApp order uses backend catalog prices and source', (t) => {
   const events = [];
   const io = { to: () => ({ emit: (event, payload) => events.push({ event, payload }) }) };
   const bridge = new OrderComplaintBridge(db, null, io);
+  db.prepare("INSERT INTO whatsapp_conversations(id,phone,state) VALUES (1,'628123456789','AI_ACTIVE')").run();
 
   const order = bridge.createOrderFromConfirmation(1, 'Ayu', '628123456789', 'pusat', [
     { menuId: 'ayam-geprek', quantity: 2 },
