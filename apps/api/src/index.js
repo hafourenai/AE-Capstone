@@ -242,11 +242,11 @@ async function processMessage(conversationId, phone, chatId, message) {
       await waha.sendMessage(chatId, acknowledgement);
       db.prepare('INSERT INTO whatsapp_messages(conversation_id,waha_message_id,direction,sender_type,content) VALUES (?,?,?,?,?)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', acknowledgement);
     }
-    // Filter menu relevan (maks 10) untuk menghindari AI timeout pada katalog besar (50+ items),
+    // Filter menu relevan (maks 4) untuk menghindari AI timeout pada katalog besar (50+ items),
     // sekaligus memastikan AI memiliki data menu aktif saat pesan berupa pesanan.
     const aiMenus = hint === 'COMPLAINT'
       ? []
-      : selectRelevantMenus(message, history, menus, 10);
+      : selectRelevantMenus(message, history, menus, 4);
     const aiResult = await ai.classifyIntent(message, { menus: aiMenus, branches }, history);
     if (hint && hint !== 'MENU' && hint !== 'GREETING') aiResult.intent = hint;
 

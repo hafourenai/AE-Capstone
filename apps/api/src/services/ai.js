@@ -45,7 +45,7 @@ const STOP_WORDS = new Set([
  * Filter menu relevan maksimal maxItems (default: 10) untuk mencegah AI timeout
  * pada small model / Termux saat katalog berukuran besar (50+ items).
  */
-export function selectRelevantMenus(message, history = [], allMenus = [], maxItems = 10) {
+export function selectRelevantMenus(message, history = [], allMenus = [], maxItems = 4) {
   const available = (allMenus || []).filter(m => m.active && (m.stock === undefined || m.stock > 0));
   if (available.length <= maxItems) return available;
 
@@ -165,17 +165,17 @@ export class AIEngine {
     const branches = catalogContext?.branches || [];
     const menuLines = menus.length
       ? menus.map(m => `${m.id}|${m.name}|${m.price}`).join('\n')
-      : '(tidak ada menu - tanyakan menu jika pelanggan ingin memesan)';
+      : '(tidak ada)';
     const branchLines = branches.length
       ? branches.map(b => `${b.id}|${b.name}`).join(';')
       : '(tidak ada)';
 
-    const systemPrompt = `CS Sambal Joelid. Balas singkat dan ramah dalam bahasa Indonesia, hanya sebagai JSON.
-Format: {"intent":"ORDER|COMPLAINT|GENERAL_QUESTION|HANDOFF|UNKNOWN","extractedData":{"customerName":"","branchId":"","items":[{"menuId":"","quantity":1}],"notes":"","complaintCategory":"","complaintDescription":""},"replyText":""}
-Menu aktif (id|nama|harga):
+    const systemPrompt = `CS Sambal Joelid. Balas singkat bahasa Indonesia, format HANYA JSON:
+{"intent":"ORDER|COMPLAINT|GENERAL_QUESTION|HANDOFF|UNKNOWN","extractedData":{"branchId":"","items":[{"menuId":"","quantity":1}],"complaintDescription":""},"replyText":""}
+Menu:
 ${menuLines}
-Cabang (id|nama): ${branchLines}
-Gunakan hanya id menu dan cabang di atas. Jangan mengarang menuId atau branchId yang tidak ada. Jika cabang belum disebutkan, kosongkan branchId (""). Jangan menghitung total harga. Perhatikan riwayat percakapan. Admin/operator/manusia = HANDOFF.`;
+Cabang: ${branchLines}
+Gunakan hanya id di atas. Jika cabang belum ada, branchId="". Jangan hitung total. Admin=HANDOFF.`;
 
     return this.processWithQueue(async () => {
       const startedAt = Date.now();
@@ -183,7 +183,7 @@ Gunakan hanya id menu dan cabang di atas. Jangan mengarang menuId atau branchId 
       const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
       try {
-        const requestCompletion = async (historyItems, maxTokens) => {
+        const requestCompletion = async (historyItems, maxTokens = 80) => {
           const response = await fetch(`${this.baseUrl}/chat/completions`, {
             method: 'POST',
             headers: {
@@ -191,15 +191,23 @@ Gunakan hanya id menu dan cabang di atas. Jangan mengarang menuId atau branchId 
               ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
             },
             body: JSON.stringify({
-            model: this.model,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              ...historyItems.map(item => ({ role: item.sender_type === 'CUSTOMER' ? 'user' : 'assistant', content: item.content })),
-              { role: 'user', content: customerMessage },
-            ],
-            temperature: 0.3,
-            max_tokens: maxTokens,
-            response_format: aiResponseFormat,
+              model: this.model,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                ...historyItems.map(item => {
+                  let content = (item.content || '').trim();
+                  // Pangkas pesan riwayat yang terlalu panjang (misal daftar menu penuh 50+ item)
+                  // agar tidak membebani context & waktu evaluasi prompt pada model lokal.
+                  if (content.length > 120) {
+                    content = content.slice(0, 100) + '...';
+                  }
+                  return { role: item.sender_type === 'CUSTOMER' ? 'user' : 'assistant', content };
+                }),
+                { role: 'user', content: customerMessage },
+              ],
+              temperature: 0.2,
+              max_tokens: maxTokens,
+              response_format: aiResponseFormat,
             }),
             signal: controller.signal,
           });
@@ -218,11 +226,11 @@ Gunakan hanya id menu dan cabang di atas. Jangan mengarang menuId atau branchId 
 
         let data;
         try {
-          data = await requestCompletion(history.slice(-2), 140);
+          data = await requestCompletion(history.slice(-2), 80);
         } catch (error) {
           if (error.status !== 400) throw error;
           console.warn(`[AI] Request ditolak (${error.message}); mencoba ulang tanpa riwayat percakapan`);
-          data = await requestCompletion([], 120);
+          data = await requestCompletion([], 70);
         }
         const content = data.choices?.[0]?.message?.content || '';
 
