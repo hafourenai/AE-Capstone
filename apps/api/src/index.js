@@ -235,7 +235,12 @@ async function processMessage(conversationId, phone, chatId, message) {
     }
     const history = db.prepare('SELECT sender_type,content FROM whatsapp_messages WHERE conversation_id=? ORDER BY id DESC LIMIT 7').all(conversationId).reverse();
     if (history.at(-1)?.sender_type === 'CUSTOMER' && history.at(-1)?.content === message) history.pop();
-    const aiResult = await ai.classifyIntent(message, { menus: menus.filter(menu => menu.active && menu.stock > 0), branches }, history);
+    // Katalog adalah bagian prompt terbesar. Hanya sertakan saat pesan terdeteksi
+    // sebagai pesanan; pertanyaan umum dan keluhan tidak memerlukannya.
+    const aiMenus = hint === 'ORDER'
+      ? menus.filter(menu => menu.active && menu.stock > 0)
+      : [];
+    const aiResult = await ai.classifyIntent(message, { menus: aiMenus, branches }, history);
     if (hint && hint !== 'MENU' && hint !== 'GREETING') aiResult.intent = hint;
 
     // Cek handoff keywords

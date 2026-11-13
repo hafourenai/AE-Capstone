@@ -100,6 +100,7 @@ Cabang (id|nama): ${catalogContext.branches.map(b => `${b.id}|${b.name}`).join('
 Gunakan hanya id menu/cabang di atas. Jangan mengarang atau menghitung total. Admin/operator/manusia = HANDOFF. Pesan/pesen/psen = ORDER.`;
 
     return this.processWithQueue(async () => {
+      const startedAt = Date.now();
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -152,9 +153,11 @@ Gunakan hanya id menu/cabang di atas. Jangan mengarang atau menghitung total. Ad
         if (!jsonMatch) throw new Error('No JSON found in response');
 
         const parsed = JSON.parse(jsonMatch[0]);
+        console.info(`[AI] Selesai dalam ${Date.now() - startedAt}ms (menu=${catalogContext.menus.length}, history=${Math.min(history.length, 2)})`);
         return normalizeAIOutput(parsed);
       } catch (error) {
         if (error.name === 'AbortError') {
+          console.error(`[AI] Timeout setelah ${Date.now() - startedAt}ms (menu=${catalogContext.menus.length}, history=${Math.min(history.length, 2)})`);
           throw new Error('AI_TIMEOUT');
         }
         throw error;
