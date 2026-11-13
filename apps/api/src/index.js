@@ -10,7 +10,7 @@ import { Server } from 'socket.io';
 import { z } from 'zod';
 import { openDatabase, orderTransitions, complaintTransitions } from './database.js';
 import { WAHAClient } from './services/waha.js';
-import { AIEngine, detectIntentHint } from './services/ai.js';
+import { AIEngine, detectIntentHint, selectRelevantMenus } from './services/ai.js';
 import { OrderComplaintBridge } from './services/orderComplaintBridge.js';
 import { CatalogService } from './services/catalog.js';
 
@@ -242,11 +242,11 @@ async function processMessage(conversationId, phone, chatId, message) {
       await waha.sendMessage(chatId, acknowledgement);
       db.prepare('INSERT INTO whatsapp_messages(conversation_id,waha_message_id,direction,sender_type,content) VALUES (?,?,?,?,?)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', acknowledgement);
     }
-    // Katalog adalah bagian prompt terbesar. Hanya sertakan saat pesan terdeteksi
-    // sebagai pesanan; pertanyaan umum dan keluhan tidak memerlukannya.
-    const aiMenus = hint === 'ORDER'
-      ? menus.filter(menu => menu.active && menu.stock > 0)
-      : [];
+    // Filter menu relevan (maks 10) untuk menghindari AI timeout pada katalog besar (50+ items),
+    // sekaligus memastikan AI memiliki data menu aktif saat pesan berupa pesanan.
+    const aiMenus = hint === 'COMPLAINT'
+      ? []
+      : selectRelevantMenus(message, history, menus, 10);
     const aiResult = await ai.classifyIntent(message, { menus: aiMenus, branches }, history);
     if (hint && hint !== 'MENU' && hint !== 'GREETING') aiResult.intent = hint;
 
@@ -266,26 +266,60 @@ async function processMessage(conversationId, phone, chatId, message) {
       response = 'Siap kak, mau pesan menu apa dan berapa jumlahnya? Ketik *menu* untuk melihat daftar menu yang tersedia.';
     }
 
-    // Jika ORDER, buat pending action untuk konfirmasi
+    // Jika ORDER, validasi branch dan items sebelum membuat pending action
     if (aiResult.intent === 'ORDER' && aiResult.extractedData?.items?.length > 0) {
+      // 1. Resolve branch yang valid
+      let chosenBranchId = aiResult.extractedData?.branchId;
+      let branch = chosenBranchId ? db.prepare('SELECT id, name FROM branches WHERE id = ? AND active = 1').get(chosenBranchId) : null;
+      if (!branch && chosenBranchId) {
+        branch = db.prepare('SELECT id, name FROM branches WHERE (LOWER(id) = LOWER(?) OR LOWER(name) LIKE LOWER(?)) AND active = 1').get(chosenBranchId, `%${chosenBranchId}%`);
+      }
+      if (!branch) {
+        const textToCheck = `${message} ${history.slice(-2).map(h => h.content || '').join(' ')}`.toLowerCase();
+        for (const b of branches) {
+          if (textToCheck.includes(b.name.toLowerCase()) || textToCheck.includes(b.id.toLowerCase())) {
+            branch = b;
+            break;
+          }
+        }
+      }
+      if (!branch && branches.length === 1) {
+        branch = branches[0];
+      }
+
+      // Jika cabang belum ditentukan, minta pelanggan memilih cabang tanpa mematikan bot ke WAITING_ADMIN
+      if (!branch) {
+        const branchList = branches.map(b => `• *${b.name}*`).join('\n');
+        response = `Siap kak, pesanan dicatat. Mau dipesan dari cabang mana ya?\n\n${branchList}\n\nSilakan sebutkan nama cabangnya.`;
+        await waha.sendMessage(chatId, response);
+        db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(conversationId, `outbound-${Date.now()}`, 'OUTBOUND', 'AI', response);
+        return;
+      }
+
       try {
-        const validated = bridge.validateAndCalculateOrder(aiResult.extractedData.branchId, aiResult.extractedData.items);
-        const branch = db.prepare('SELECT name FROM branches WHERE id = ?').get(aiResult.extractedData.branchId);
-        const summary = bridge.formatOrderSummary(branch.name, aiResult.extractedData.items, menus, validated.totalAmount);
+        const validated = bridge.validateAndCalculateOrder(branch.id, aiResult.extractedData.items);
+        const summary = bridge.formatOrderSummary(branch.name, validated.items, menus, validated.totalAmount);
 
         // Simpan pending action
         bridge.savePendingAction(conversationId, 'ORDER_CONFIRMATION', {
           customerName: aiResult.extractedData.customerName || 'Pelanggan',
-          branchId: aiResult.extractedData.branchId,
-          items: aiResult.extractedData.items,
+          branchId: branch.id,
+          items: validated.items.map(i => ({ menuId: i.menuId, quantity: i.quantity })),
           notes: aiResult.extractedData.notes,
         });
 
         response = summary;
       } catch (e) {
         console.error('[ORDER] Validasi gagal:', e.message);
-        response = `❌ Maaf, ada masalah dengan pesanan Anda. Pesan Anda telah kami teruskan ke admin untuk ditangani.`;
-        db.prepare('UPDATE whatsapp_conversations SET state=?, paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run('WAITING_ADMIN', pauseUntil(), conversationId);
+        if (e.message.startsWith('MENU_NOT_FOUND')) {
+          const menuName = e.message.replace('MENU_NOT_FOUND:', '').trim();
+          response = `Mohon maaf kak, menu "${menuName}" tidak ditemukan atau sedang tidak tersedia. Ketik *menu* untuk melihat daftar menu yang tersedia.`;
+        } else if (e.message.startsWith('INSUFFICIENT_STOCK')) {
+          response = `Mohon maaf kak, stok untuk menu yang dipilih saat ini tidak mencukupi. Silakan pilih menu lainnya atau ketik *menu*.`;
+        } else {
+          response = `❌ Maaf, ada masalah dengan pesanan Anda. Pesan Anda telah kami teruskan ke admin untuk ditangani.`;
+          db.prepare('UPDATE whatsapp_conversations SET state=?, paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run('WAITING_ADMIN', pauseUntil(), conversationId);
+        }
       }
     } else if (aiResult.intent === 'COMPLAINT') {
       const description = (aiResult.extractedData?.complaintDescription || message).trim().slice(0, 2000);

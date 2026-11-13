@@ -28,10 +28,79 @@ export function detectIntentHint(message) {
   const text = message.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
   if (/\b(admin|operator|manusia)\b/.test(text)) return 'HANDOFF';
   if (/\b(keluhan|keluh|komplain|complain|kecewa|rusak|basi|salah pesanan)\b/.test(text)) return 'COMPLAINT';
-  if (/\b(pesan|pesen|psen|order|beli|mau makan|mknan|makanan)\b/.test(text)) return 'ORDER';
+  if (/\b(pesan|pesen|psen|order|beli|mau makan|mknan|makanan|bungkus|porsi|paket)\b/.test(text)) return 'ORDER';
   if (/\b(menu|daftar menu|harga)\b/.test(text)) return 'MENU';
   if (/^(halo+|hai+|hi+|pagi|siang|sore|malam|ass?alamualaikum)[\s!,.]*$/.test(text.trim())) return 'GREETING';
   return null;
+}
+
+const STOP_WORDS = new Set([
+  'saya', 'sy', 'aku', 'gue', 'gw', 'mau', 'ingin', 'tolong', 'bisa', 'dong', 'kak',
+  'min', 'admin', 'ya', 'dan', 'sama', 'di', 'ke', 'dari', 'ini', 'itu', 'ada',
+  'apa', 'berapa', 'pesan', 'pesen', 'psen', 'order', 'beli', 'cabang', 'bungkus',
+  'porsi', 'paket', 'untuk', 'aja', 'saja', 'juga', 'buat', 'nya'
+]);
+
+/**
+ * Filter menu relevan maksimal maxItems (default: 10) untuk mencegah AI timeout
+ * pada small model / Termux saat katalog berukuran besar (50+ items).
+ */
+export function selectRelevantMenus(message, history = [], allMenus = [], maxItems = 10) {
+  const available = (allMenus || []).filter(m => m.active && (m.stock === undefined || m.stock > 0));
+  if (available.length <= maxItems) return available;
+
+  const recentTexts = [
+    message || '',
+    ...(history || []).slice(-2).map(h => h.content || ''),
+  ].join(' ').toLowerCase();
+
+  const tokens = recentTexts
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 3 && !STOP_WORDS.has(w));
+
+  const scored = available.map(menu => {
+    let score = 0;
+    const nameLower = (menu.name || '').toLowerCase();
+    const idLower = (menu.id || '').toLowerCase();
+    const aliases = Array.isArray(menu.aliases) ? menu.aliases.map(a => String(a).toLowerCase()) : [];
+
+    if (nameLower && recentTexts.includes(nameLower)) score += 30;
+    if (idLower && recentTexts.includes(idLower)) score += 30;
+
+    for (const alias of aliases) {
+      if (alias && recentTexts.includes(alias)) {
+        score += 25;
+        break;
+      }
+    }
+
+    for (const token of tokens) {
+      if (nameLower.includes(token)) score += 10;
+      if (idLower.includes(token)) score += 5;
+      for (const alias of aliases) {
+        if (alias.includes(token)) {
+          score += 8;
+          break;
+        }
+      }
+    }
+
+    return { menu, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  const matched = scored.filter(s => s.score > 0).map(s => s.menu);
+  const remaining = scored.filter(s => s.score <= 0).map(s => s.menu);
+
+  const result = [...matched];
+  for (const item of remaining) {
+    if (result.length >= maxItems) break;
+    result.push(item);
+  }
+
+  return result.slice(0, maxItems);
 }
 
 // `json_schema` menambahkan grammar/schema yang besar ke setiap request. Model lokal
@@ -92,12 +161,21 @@ export class AIEngine {
    * Klasifikasi intent dan ekstraksi data dari pesan pelanggan
    */
   async classifyIntent(customerMessage, catalogContext, history = []) {
+    const menus = catalogContext?.menus || [];
+    const branches = catalogContext?.branches || [];
+    const menuLines = menus.length
+      ? menus.map(m => `${m.id}|${m.name}|${m.price}`).join('\n')
+      : '(tidak ada menu - tanyakan menu jika pelanggan ingin memesan)';
+    const branchLines = branches.length
+      ? branches.map(b => `${b.id}|${b.name}`).join(';')
+      : '(tidak ada)';
+
     const systemPrompt = `CS Sambal Joelid. Balas singkat dan ramah dalam bahasa Indonesia, hanya sebagai JSON.
 Format: {"intent":"ORDER|COMPLAINT|GENERAL_QUESTION|HANDOFF|UNKNOWN","extractedData":{"customerName":"","branchId":"","items":[{"menuId":"","quantity":1}],"notes":"","complaintCategory":"","complaintDescription":""},"replyText":""}
 Menu aktif (id|nama|harga):
-${catalogContext.menus.map(m => `${m.id}|${m.name}|${m.price}`).join('\n')}
-Cabang (id|nama): ${catalogContext.branches.map(b => `${b.id}|${b.name}`).join(';')}
-Gunakan hanya id menu/cabang di atas. Jangan mengarang atau menghitung total. Admin/operator/manusia = HANDOFF. Pesan/pesen/psen = ORDER.`;
+${menuLines}
+Cabang (id|nama): ${branchLines}
+Gunakan hanya id menu dan cabang di atas. Jangan mengarang menuId atau branchId yang tidak ada. Jika cabang belum disebutkan, kosongkan branchId (""). Jangan menghitung total harga. Perhatikan riwayat percakapan. Admin/operator/manusia = HANDOFF.`;
 
     return this.processWithQueue(async () => {
       const startedAt = Date.now();

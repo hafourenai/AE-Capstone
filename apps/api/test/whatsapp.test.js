@@ -6,7 +6,7 @@ import test from 'node:test';
 import { openDatabase } from '../src/database.js';
 import { OrderComplaintBridge } from '../src/services/orderComplaintBridge.js';
 import { WAHAClient } from '../src/services/waha.js';
-import { detectIntentHint, normalizeAIOutput } from '../src/services/ai.js';
+import { detectIntentHint, normalizeAIOutput, selectRelevantMenus } from '../src/services/ai.js';
 import { normalizeCatalogCsv } from '../src/services/catalog.js';
 
 function temporaryDatabase(t) {
@@ -106,4 +106,37 @@ test('slang order text cannot be mistaken for a complaint', () => {
 test('Google Sheets CSV fields are normalized including stock and aliases', () => {
   const [menu] = normalizeCatalogCsv('kode,nama,harga,stok,aktif,deskripsi,alias\nREG_AYAM,Paket Ayam,20300,5,TRUE,"Nasi, Ayam",paket ayam|ayam reguler');
   assert.deepEqual(menu, { id: 'REG_AYAM', name: 'Paket Ayam', price: 20300, stock: 5, active: true, description: 'Nasi, Ayam', aliases: ['paket ayam', 'ayam reguler'] });
+});
+
+test('selectRelevantMenus limits 56 items to at most 10 and prioritizes matching keywords', () => {
+  const dummyMenus = Array.from({ length: 56 }, (_, i) => ({
+    id: `menu-${i}`,
+    name: `Menu Item ${i}`,
+    price: 15000 + i * 1000,
+    stock: 10,
+    active: true,
+    aliases: i === 42 ? ['sambal spesial'] : [],
+  }));
+  dummyMenus[50].name = 'Ayam Geprek Spesial';
+  dummyMenus[50].id = 'ayam-geprek';
+
+  const selected = selectRelevantMenus('Saya mau pesan ayam geprek 2 porsi', [], dummyMenus, 10);
+  assert.equal(selected.length, 10);
+  assert.equal(selected[0].id, 'ayam-geprek');
+
+  const aliasSelected = selectRelevantMenus('ada sambal spesial?', [], dummyMenus, 10);
+  assert.equal(aliasSelected.length, 10);
+  assert.equal(aliasSelected[0].id, 'menu-42');
+});
+
+test('validateAndCalculateOrder resolves menu by name or alias as fallback', (t) => {
+  const db = temporaryDatabase(t);
+  const bridge = new OrderComplaintBridge(db, null, null);
+
+  // 'ayam-geprek' is seeded in temporaryDatabase
+  const result = bridge.validateAndCalculateOrder('pusat', [
+    { menuId: 'Ayam Geprek', quantity: 2 },
+  ]);
+  assert.equal(result.items[0].menuId, 'ayam-geprek');
+  assert.equal(result.totalAmount, 36000);
 });

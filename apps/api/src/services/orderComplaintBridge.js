@@ -17,11 +17,12 @@ export class OrderComplaintBridge {
   /**
    * Format ringkasan order untuk konfirmasi
    */
-  formatOrderSummary(branchName, items, menus, totalAmount) {
+  formatOrderSummary(branchName, items, menus = [], totalAmount) {
     const itemLines = items
       .map(item => {
-        const menu = menus.find(m => m.id === item.menuId);
-        const subtotal = menu.price * item.quantity;
+        const menu = item.menu || menus.find(m => m.id === item.menuId) || { name: item.menuId, price: 0 };
+        const price = menu.price || (item.menu?.price ?? 0);
+        const subtotal = price * item.quantity;
         return `• ${item.quantity}x ${menu.name} (Rp ${subtotal.toLocaleString('id-ID')})`;
       })
       .join('\n');
@@ -33,8 +34,11 @@ export class OrderComplaintBridge {
    * Validasi dan hitung ulang order dari master data
    */
   validateAndCalculateOrder(branchId, items) {
-    // Validasi branch
-    const branch = this.db.prepare('SELECT id, name FROM branches WHERE id = ? AND active = 1').get(branchId);
+    // Validasi branch: cari by ID atau fallback nama/case-insensitive
+    let branch = branchId ? this.db.prepare('SELECT id, name FROM branches WHERE id = ? AND active = 1').get(branchId) : null;
+    if (!branch && branchId) {
+      branch = this.db.prepare('SELECT id, name FROM branches WHERE (LOWER(id) = LOWER(?) OR LOWER(name) LIKE LOWER(?)) AND active = 1').get(branchId, `%${branchId}%`);
+    }
     if (!branch) {
       throw new Error('BRANCH_NOT_FOUND');
     }
@@ -44,11 +48,30 @@ export class OrderComplaintBridge {
 
     // Validasi dan ambil harga dari master
     const enrichedItems = deduped.map(item => {
-      const menu = this.db.prepare('SELECT id, name, price, stock FROM menus WHERE id = ? AND active = 1 AND stock > 0').get(item.menuId);
+      let menu = this.db.prepare('SELECT id, name, price, stock FROM menus WHERE id = ? AND active = 1 AND stock > 0').get(item.menuId);
+      if (!menu && item.menuId) {
+        menu = this.db.prepare('SELECT id, name, price, stock FROM menus WHERE (LOWER(id) = LOWER(?) OR LOWER(name) = LOWER(?)) AND active = 1 AND stock > 0').get(item.menuId, item.menuId);
+      }
+      if (!menu && item.menuId) {
+        const allActive = this.db.prepare('SELECT id, name, price, stock, aliases FROM menus WHERE active = 1 AND stock > 0').all();
+        const search = String(item.menuId).trim().toLowerCase();
+        menu = allActive.find(m => {
+          if (m.name.toLowerCase().includes(search) || search.includes(m.name.toLowerCase())) return true;
+          try {
+            const aliases = m.aliases ? JSON.parse(m.aliases) : [];
+            return aliases.some(a => {
+              const aLower = String(a).toLowerCase();
+              return aLower.includes(search) || search.includes(aLower);
+            });
+          } catch {
+            return false;
+          }
+        });
+      }
       if (!menu) throw new Error(`MENU_NOT_FOUND: ${item.menuId}`);
       if (item.quantity < 1 || item.quantity > 99) throw new Error('INVALID_QUANTITY');
       if (item.quantity > menu.stock) throw new Error(`INSUFFICIENT_STOCK: ${item.menuId}`);
-      return { ...item, menu };
+      return { ...item, menuId: menu.id, menu };
     });
 
     // Hitung total dari backend (bukan dari AI/customer)
