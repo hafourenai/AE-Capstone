@@ -34,48 +34,9 @@ export function detectIntentHint(message) {
   return null;
 }
 
-const aiResponseFormat = {
-  type: 'json_schema',
-  json_schema: {
-    name: 'sambal_joelid_customer_assistant',
-    strict: true,
-    schema: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        intent: {
-          type: 'string',
-          enum: ['ORDER', 'COMPLAINT', 'GENERAL_QUESTION', 'HANDOFF', 'UNKNOWN'],
-        },
-        extractedData: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            customerName: { type: 'string' },
-            branchId: { type: 'string' },
-            items: {
-              type: 'array',
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  menuId: { type: 'string' },
-                  quantity: { type: 'integer', minimum: 1 },
-                },
-                required: ['menuId', 'quantity'],
-              },
-            },
-            notes: { type: 'string' },
-            complaintCategory: { type: 'string' },
-            complaintDescription: { type: 'string' },
-          },
-        },
-        replyText: { type: 'string', minLength: 1 },
-      },
-      required: ['intent', 'extractedData', 'replyText'],
-    },
-  },
-};
+// `json_schema` menambahkan grammar/schema yang besar ke setiap request. Model lokal
+// di HP jauh lebih cepat dengan JSON mode biasa; hasil tetap divalidasi oleh Zod.
+const aiResponseFormat = { type: 'json_object' };
 
 export function normalizeAIOutput(value) {
   const rawIntent = typeof value?.intent === 'string' ? value.intent.toUpperCase() : 'UNKNOWN';
@@ -131,18 +92,12 @@ export class AIEngine {
    * Klasifikasi intent dan ekstraksi data dari pesan pelanggan
    */
   async classifyIntent(customerMessage, catalogContext, history = []) {
-    const systemPrompt = `Anda adalah customer service Sambal Joelid. Jawab natural, singkat, dan ramah dalam bahasa Indonesia.
-
-MENU AKTIF (id|nama|harga):
+    const systemPrompt = `CS Sambal Joelid. Balas singkat dan ramah dalam bahasa Indonesia, hanya sebagai JSON.
+Format: {"intent":"ORDER|COMPLAINT|GENERAL_QUESTION|HANDOFF|UNKNOWN","extractedData":{"customerName":"","branchId":"","items":[{"menuId":"","quantity":1}],"notes":"","complaintCategory":"","complaintDescription":""},"replyText":""}
+Menu aktif (id|nama|harga):
 ${catalogContext.menus.map(m => `${m.id}|${m.name}|${m.price}`).join('\n')}
-
-CABANG (id|nama):
-${catalogContext.branches.map(b => `${b.id}|${b.name}`).join('\n')}
-
-Tentukan intent ORDER, COMPLAINT, GENERAL_QUESTION, HANDOFF, atau UNKNOWN. Admin/operator/manusia berarti HANDOFF.
-ORDER: ekstrak branchId, items [{menuId,quantity}], notes. COMPLAINT: ekstrak complaintDescription dan complaintCategory.
-Pahami singkatan Indonesia; "sy mau psen mknan" adalah ORDER, bukan keluhan. Jangan mengarang menu/harga/cabang dan jangan hitung harga akhir.
-Output hanya JSON: {"intent":"GENERAL_QUESTION","extractedData":{},"replyText":"Halo! Ada yang bisa kami bantu?"}`;
+Cabang (id|nama): ${catalogContext.branches.map(b => `${b.id}|${b.name}`).join(';')}
+Gunakan hanya id menu/cabang di atas. Jangan mengarang atau menghitung total. Admin/operator/manusia = HANDOFF. Pesan/pesen/psen = ORDER.`;
 
     return this.processWithQueue(async () => {
       const controller = new AbortController();
@@ -184,11 +139,11 @@ Output hanya JSON: {"intent":"GENERAL_QUESTION","extractedData":{},"replyText":"
 
         let data;
         try {
-          data = await requestCompletion(history.slice(-4), 220);
+          data = await requestCompletion(history.slice(-2), 140);
         } catch (error) {
           if (error.status !== 400) throw error;
           console.warn(`[AI] Request ditolak (${error.message}); mencoba ulang tanpa riwayat percakapan`);
-          data = await requestCompletion([], 180);
+          data = await requestCompletion([], 120);
         }
         const content = data.choices?.[0]?.message?.content || '';
 

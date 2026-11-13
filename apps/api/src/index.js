@@ -208,6 +208,14 @@ async function processMessage(conversationId, phone, chatId, message) {
     const menus = await catalog.getMenus();
     const branches = db.prepare('SELECT id, name FROM branches WHERE active = 1').all();
     const hint = detectIntentHint(message);
+    if (hint === 'HANDOFF') {
+      db.prepare('UPDATE whatsapp_conversations SET state=?, paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run('WAITING_ADMIN', pauseUntil(), conversationId);
+      const response = '👋 Mohon tunggu, kami sedang menghubungkan Anda dengan tim admin kami...';
+      await waha.sendMessage(chatId, response);
+      db.prepare('INSERT INTO whatsapp_messages(conversation_id,waha_message_id,direction,sender_type,content) VALUES (?,?,?,?,?)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', response);
+      io.to('admins').emit('whatsapp:conversation-updated', { conversationId, state: 'WAITING_ADMIN' });
+      return;
+    }
     if (hint === 'GREETING') {
       await waha.sendMessage(chatId, helpText);
       db.prepare('INSERT INTO whatsapp_messages(conversation_id,waha_message_id,direction,sender_type,content) VALUES (?,?,?,?,?)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', helpText);
@@ -215,6 +223,12 @@ async function processMessage(conversationId, phone, chatId, message) {
     }
     if (hint === 'MENU') {
       const response = formatMenuList(menus);
+      await waha.sendMessage(chatId, response);
+      db.prepare('INSERT INTO whatsapp_messages(conversation_id,waha_message_id,direction,sender_type,content) VALUES (?,?,?,?,?)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', response);
+      return;
+    }
+    if (hint === 'ORDER' && /^(saya |sy |aku |mau |ingin )*(pesan|pesen|psen|order|beli)( makanan| mknan)?[\s!,.]*$/i.test(message.trim())) {
+      const response = 'Siap kak, mau pesan menu apa dan berapa jumlahnya? Ketik *menu* untuk melihat daftar menu yang tersedia.';
       await waha.sendMessage(chatId, response);
       db.prepare('INSERT INTO whatsapp_messages(conversation_id,waha_message_id,direction,sender_type,content) VALUES (?,?,?,?,?)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', response);
       return;
