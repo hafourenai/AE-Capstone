@@ -235,6 +235,13 @@ async function processMessage(conversationId, phone, chatId, message) {
     }
     const history = db.prepare('SELECT sender_type,content FROM whatsapp_messages WHERE conversation_id=? ORDER BY id DESC LIMIT 7').all(conversationId).reverse();
     if (history.at(-1)?.sender_type === 'CUSTOMER' && history.at(-1)?.content === message) history.pop();
+    if (hint === 'ORDER' || hint === 'COMPLAINT') {
+      const acknowledgement = hint === 'ORDER'
+        ? '⏳ Baik kak, detail pesanan sedang kami periksa. Mohon tunggu sebentar, ya.'
+        : '⏳ Baik kak, keluhan Anda sedang kami pelajari. Mohon tunggu sebentar, ya.';
+      await waha.sendMessage(chatId, acknowledgement);
+      db.prepare('INSERT INTO whatsapp_messages(conversation_id,waha_message_id,direction,sender_type,content) VALUES (?,?,?,?,?)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', acknowledgement);
+    }
     // Katalog adalah bagian prompt terbesar. Hanya sertakan saat pesan terdeteksi
     // sebagai pesanan; pertanyaan umum dan keluhan tidak memerlukannya.
     const aiMenus = hint === 'ORDER'
