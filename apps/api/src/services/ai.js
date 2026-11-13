@@ -122,6 +122,24 @@ export function normalizeAIOutput(value) {
   return { intent, replyText: safeReplies[intent] };
 }
 
+export function parseAICompletion(data) {
+  const choice = data?.choices?.[0];
+  if (choice?.finish_reason === 'length') {
+    console.warn('[AI] Respons terpotong (finish_reason=length); meminta klarifikasi');
+    return { intent: 'UNKNOWN', replyText: 'Maaf kak, detail pesan belum terbaca lengkap. Mohon kirim ulang nama menu, jumlah, dan cabang pilihan Anda, atau ketik admin untuk bantuan.' };
+  }
+  const content = choice?.message?.content;
+  try {
+    if (typeof content !== 'string') throw new Error('Missing content');
+    // Hanya buang pembungkus Markdown; jangan mengambil objek parsial dari JSON rusak.
+    const text = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    return normalizeAIOutput(JSON.parse(text));
+  } catch {
+    console.warn('[AI] Respons JSON tidak valid; meminta klarifikasi');
+    return { intent: 'UNKNOWN', replyText: 'Maaf kak, pesan belum berhasil dipahami. Mohon ulangi detail pesanan atau keluhan Anda, atau ketik admin untuk bantuan.' };
+  }
+}
+
 export class AIEngine {
   constructor(config) {
     this.baseUrl = config.baseUrl; // https://termux-tunnel-url/v1
@@ -175,7 +193,7 @@ export class AIEngine {
 Menu:
 ${menuLines}
 Cabang: ${branchLines}
-Gunakan hanya id di atas. Jika cabang belum ada, branchId="". Jangan hitung total. Admin=HANDOFF.`;
+Gunakan hanya id di atas. Hilangkan field kosong/tidak relevan. replyText boleh kosong. Jika cabang belum ada, hilangkan branchId. Jangan hitung total. Admin=HANDOFF.`;
 
     return this.processWithQueue(async () => {
       const startedAt = Date.now();
@@ -183,7 +201,7 @@ Gunakan hanya id di atas. Jika cabang belum ada, branchId="". Jangan hitung tota
       const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
       try {
-        const requestCompletion = async (historyItems, maxTokens = 80) => {
+        const requestCompletion = async (historyItems, maxTokens = 160) => {
           const response = await fetch(`${this.baseUrl}/chat/completions`, {
             method: 'POST',
             headers: {
@@ -226,21 +244,15 @@ Gunakan hanya id di atas. Jika cabang belum ada, branchId="". Jangan hitung tota
 
         let data;
         try {
-          data = await requestCompletion(history.slice(-2), 80);
+          data = await requestCompletion(history.slice(-2), 160);
         } catch (error) {
           if (error.status !== 400) throw error;
           console.warn(`[AI] Request ditolak (${error.message}); mencoba ulang tanpa riwayat percakapan`);
-          data = await requestCompletion([], 70);
+          data = await requestCompletion([], 160);
         }
-        const content = data.choices?.[0]?.message?.content || '';
-
-        // Parse JSON dari response (toleran terhadap teks pengantar)
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) throw new Error('No JSON found in response');
-
-        const parsed = JSON.parse(jsonMatch[0]);
+        const parsed = parseAICompletion(data);
         console.info(`[AI] Selesai dalam ${Date.now() - startedAt}ms (menu=${catalogContext.menus.length}, history=${Math.min(history.length, 2)})`);
-        return normalizeAIOutput(parsed);
+        return parsed;
       } catch (error) {
         if (error.name === 'AbortError') {
           console.error(`[AI] Timeout setelah ${Date.now() - startedAt}ms (menu=${catalogContext.menus.length}, history=${Math.min(history.length, 2)})`);

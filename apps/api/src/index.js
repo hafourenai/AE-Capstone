@@ -248,7 +248,7 @@ async function processMessage(conversationId, phone, chatId, message) {
       ? []
       : selectRelevantMenus(message, history, menus, 4);
     const aiResult = await ai.classifyIntent(message, { menus: aiMenus, branches }, history);
-    if (hint && hint !== 'MENU' && hint !== 'GREETING') aiResult.intent = hint;
+    if (aiResult.intent !== 'UNKNOWN' && hint && hint !== 'MENU' && hint !== 'GREETING') aiResult.intent = hint;
 
     // Cek handoff keywords
     const handoffKeywords = ['admin', 'operator', 'manusia'];

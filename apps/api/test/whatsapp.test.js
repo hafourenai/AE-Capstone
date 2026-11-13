@@ -6,7 +6,7 @@ import test from 'node:test';
 import { openDatabase } from '../src/database.js';
 import { OrderComplaintBridge } from '../src/services/orderComplaintBridge.js';
 import { WAHAClient } from '../src/services/waha.js';
-import { detectIntentHint, normalizeAIOutput, selectRelevantMenus } from '../src/services/ai.js';
+import { detectIntentHint, normalizeAIOutput, selectRelevantMenus, parseAICompletion } from '../src/services/ai.js';
 import { normalizeCatalogCsv } from '../src/services/catalog.js';
 
 function temporaryDatabase(t) {
@@ -18,6 +18,27 @@ function temporaryDatabase(t) {
   });
   return db;
 }
+
+test('AI completion discards truncated orders even when the partial content is valid JSON', () => {
+  const result = parseAICompletion({ choices: [{ finish_reason: 'length', message: {
+    content: JSON.stringify({ intent: 'ORDER', extractedData: { items: [{ menuId: 'ayam-geprek', quantity: 2 }] }, replyText: '' }),
+  } }] });
+  assert.equal(result.intent, 'UNKNOWN');
+  assert.equal(result.extractedData, undefined);
+});
+
+test('malformed AI JSON asks for clarification without throwing or recovering partial items', () => {
+  const result = parseAICompletion({ choices: [{ finish_reason: 'stop', message: {
+    content: '{"intent":"ORDER","extractedData":{"items":[{"menuId":"ayam-geprek","quantity":2}]},"replyText":"pesan "ayam""}',
+  } }] });
+  assert.equal(result.intent, 'UNKNOWN');
+  assert.equal(result.extractedData, undefined);
+});
+
+test('complete AI JSON preserves order details', () => {
+  const order = { intent: 'ORDER', extractedData: { branchId: 'pusat', items: [{ menuId: 'ayam-geprek', quantity: 2 }] }, replyText: 'Baik kak.' };
+  assert.deepEqual(parseAICompletion({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(order) } }] }), order);
+});
 
 test('migration adds WhatsApp tables and WEB source defaults', (t) => {
   const db = temporaryDatabase(t);
