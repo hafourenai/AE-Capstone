@@ -8,6 +8,31 @@ import { OrderComplaintBridge } from '../src/services/orderComplaintBridge.js';
 import { WAHAClient } from '../src/services/waha.js';
 import { detectIntentHint, normalizeAIOutput, selectRelevantMenus, parseAICompletion } from '../src/services/ai.js';
 import { normalizeCatalogCsv } from '../src/services/catalog.js';
+import { formatGuide, parseCustomerMessage } from '../src/services/messageFormat.js';
+
+const exampleMenus = [{ id: 'ayam-geprek', name: 'Ayam Geprek', active: 1, stock: 10 }];
+const exampleBranches = [{ id: 'pusat', name: 'Cabang Pusat' }];
+
+test('WhatsApp guide uses actual catalog data and web alternative', () => {
+  assert.match(formatGuide('ORDER', exampleMenus, exampleBranches), /Menu: Ayam Geprek x 2/);
+  assert.match(formatGuide('COMPLAINT', exampleMenus, exampleBranches), /https:\/\/joelid\.hontalk\.my\.id\//);
+});
+
+test('structured WhatsApp order is validated against active menu and branch', () => {
+  assert.deepEqual(parseCustomerMessage('Pesan\nNama: Budi\nCabang: Cabang Pusat\nMenu: Ayam Geprek x 2\nCatatan: Tidak pedas', 'ORDER', exampleMenus, exampleBranches).data, {
+    customerName: 'Budi', branchId: 'pusat', items: [{ menuId: 'ayam-geprek', quantity: 2 }], notes: 'Tidak pedas',
+  });
+  assert.match(parseCustomerMessage('Pesan\nNama: Budi\nCabang: Cabang Pusat\nMenu: Ayam Geprek x 0', 'ORDER', exampleMenus, exampleBranches).error, /jumlah 1–99/);
+  assert.match(parseCustomerMessage('Pesan\nNama: Budi\nCabang: Salah\nMenu: Ayam Geprek x 2', 'ORDER', exampleMenus, exampleBranches).error, /Cabang/);
+  assert.match(parseCustomerMessage('Pesan\nNama: Budi\nCabang: Cabang Pusat\nMenu: Menu Palsu x 2', 'ORDER', exampleMenus, exampleBranches).error, /tidak tersedia/);
+});
+
+test('structured WhatsApp complaint requires known category and detailed description', () => {
+  assert.deepEqual(parseCustomerMessage('Keluhan\nNama: Budi\nCabang: Cabang Pusat\nKategori: Pelayanan\nDeskripsi: Pesanan saya terlambat satu jam.', 'COMPLAINT', exampleMenus, exampleBranches).data, {
+    customerName: 'Budi', branchId: 'pusat', complaintCategory: 'PELAYANAN', complaintDescription: 'Pesanan saya terlambat satu jam.',
+  });
+  assert.match(parseCustomerMessage('Keluhan\nNama: Budi\nCabang: Cabang Pusat\nKategori: Lainnya\nDeskripsi: Pendek', 'COMPLAINT', exampleMenus, exampleBranches).error, /Deskripsi/);
+});
 
 function temporaryDatabase(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sambal-joelid-'));

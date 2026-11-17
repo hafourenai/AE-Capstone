@@ -13,6 +13,7 @@ import { WAHAClient } from './services/waha.js';
 import { AIEngine, detectIntentHint, selectRelevantMenus } from './services/ai.js';
 import { OrderComplaintBridge } from './services/orderComplaintBridge.js';
 import { CatalogService } from './services/catalog.js';
+import { CUSTOMER_WEB_URL, formatGuide, parseCustomerMessage } from './services/messageFormat.js';
 
 const env = {
   port: Number(process.env.PORT || 3001), dbPath: process.env.CUSTOMER_MODULE_DB_PATH || './data/customer-module.sqlite',
@@ -94,12 +95,12 @@ function isRateLimited(phoneNumber) {
 
 const rows = (sql, ...p) => db.prepare(sql).all(...p);
 const ref = (prefix) => `${prefix}-${new Date().toISOString().slice(0,10).replaceAll('-','')}-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
-const helpText = 'Halo kak! Selamat datang di Sambal Joelid 🌶️\n\nKetik *menu* untuk melihat menu, *pesan* untuk memesan, *keluhan* untuk menyampaikan kendala, atau *admin* untuk berbicara dengan staf.';
+const helpText = `Halo kak! Selamat datang di Sambal Joelid 🌶️\n\nKetik *menu* untuk melihat menu, *pesan* untuk contoh format pesanan, *keluhan* untuk contoh format keluhan, atau *admin* untuk berbicara dengan staf.\n\nPesanan/keluhan otomatis dibuat setelah format lengkap dikirim dan dikonfirmasi dengan *YA*. Formulir web: ${CUSTOMER_WEB_URL}`;
 const pauseUntil = () => new Date(Date.now() + env.adminPauseSeconds * 1000).toISOString().replace('T', ' ').slice(0, 19);
 
 function formatMenuList(menus) {
   const available = menus.filter(menu => menu.active && menu.stock > 0);
-  return `🌶️ *Menu Sambal Joelid*\n\n${available.map(menu => `• ${menu.name} — Rp ${menu.price.toLocaleString('id-ID')} (stok ${menu.stock})`).join('\n')}\n\nKetik *pesan* diikuti menu dan jumlahnya, ya kak.`;
+  return `🌶️ *Menu Sambal Joelid*\n\n${available.map(menu => `• ${menu.name} — Rp ${menu.price.toLocaleString('id-ID')} (stok ${menu.stock})`).join('\n') || 'Belum ada menu tersedia.'}\n\nKetik *pesan* untuk melihat contoh format pemesanan otomatis, atau buka ${CUSTOMER_WEB_URL}`;
 }
 
 function resumeExpiredConversations() {
@@ -207,7 +208,8 @@ async function processMessage(conversationId, phone, chatId, message) {
     // Panggil AI untuk klasifikasi
     const menus = await catalog.getMenus();
     const branches = db.prepare('SELECT id, name FROM branches WHERE active = 1').all();
-    const hint = detectIntentHint(message);
+    const commandKind = /^pesan(?:\s|$)/i.test(message) ? 'ORDER' : /^keluhan(?:\s|$)/i.test(message) ? 'COMPLAINT' : null;
+    const hint = commandKind || detectIntentHint(message);
     if (hint === 'HANDOFF') {
       db.prepare('UPDATE whatsapp_conversations SET state=?, paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run('WAITING_ADMIN', pauseUntil(), conversationId);
       const response = '👋 Mohon tunggu, kami sedang menghubungkan Anda dengan tim admin kami...';
@@ -227,15 +229,21 @@ async function processMessage(conversationId, phone, chatId, message) {
       db.prepare('INSERT INTO whatsapp_messages(conversation_id,waha_message_id,direction,sender_type,content) VALUES (?,?,?,?,?)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', response);
       return;
     }
-    if (hint === 'ORDER' && /^(saya |sy |aku |mau |ingin )*(pesan|pesen|psen|order|beli)( makanan| mknan)?[\s!,.]*$/i.test(message.trim())) {
-      const response = 'Siap kak, mau pesan menu apa dan berapa jumlahnya? Ketik *menu* untuk melihat daftar menu yang tersedia.';
-      await waha.sendMessage(chatId, response);
-      db.prepare('INSERT INTO whatsapp_messages(conversation_id,waha_message_id,direction,sender_type,content) VALUES (?,?,?,?,?)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', response);
-      return;
+    const formatKind = hint === 'ORDER' || hint === 'COMPLAINT' ? hint : null;
+    let structuredData;
+    if (formatKind) {
+      const parsed = parseCustomerMessage(message, formatKind, menus, branches);
+      if (parsed.error) {
+        const response = `${parsed.error}\n\n${formatGuide(formatKind, menus, branches)}`;
+        await waha.sendMessage(chatId, response);
+        db.prepare('INSERT INTO whatsapp_messages(conversation_id,waha_message_id,direction,sender_type,content) VALUES (?,?,?,?,?)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', response);
+        return;
+      }
+      structuredData = parsed.data;
     }
     const history = db.prepare('SELECT sender_type,content FROM whatsapp_messages WHERE conversation_id=? ORDER BY id DESC LIMIT 7').all(conversationId).reverse();
     if (history.at(-1)?.sender_type === 'CUSTOMER' && history.at(-1)?.content === message) history.pop();
-    if (hint === 'ORDER' || hint === 'COMPLAINT') {
+    if (structuredData) {
       const acknowledgement = hint === 'ORDER'
         ? '⏳ Baik kak, detail pesanan sedang kami periksa. Mohon tunggu sebentar, ya.'
         : '⏳ Baik kak, keluhan Anda sedang kami pelajari. Mohon tunggu sebentar, ya.';
@@ -247,12 +255,14 @@ async function processMessage(conversationId, phone, chatId, message) {
     const aiMenus = hint === 'COMPLAINT'
       ? []
       : selectRelevantMenus(message, history, menus, 4);
-    const aiResult = await ai.classifyIntent(message, { menus: aiMenus, branches }, history);
+    const aiResult = structuredData
+      ? { intent: formatKind, extractedData: structuredData, replyText: '' }
+      : await ai.classifyIntent(message, { menus: aiMenus, branches }, history);
     if (aiResult.intent !== 'UNKNOWN' && hint && hint !== 'MENU' && hint !== 'GREETING') aiResult.intent = hint;
 
     // Cek handoff keywords
     const handoffKeywords = ['admin', 'operator', 'manusia'];
-    if (aiResult.intent === 'HANDOFF' || handoffKeywords.some(kw => message.toLowerCase().includes(kw))) {
+    if (!structuredData && (aiResult.intent === 'HANDOFF' || handoffKeywords.some(kw => message.toLowerCase().includes(kw)))) {
       db.prepare('UPDATE whatsapp_conversations SET state=?, paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run('WAITING_ADMIN', pauseUntil(), conversationId);
       const response = '👋 Mohon tunggu, kami sedang menghubungkan Anda dengan tim admin kami...';
       await waha.sendMessage(chatId, response);
@@ -261,10 +271,16 @@ async function processMessage(conversationId, phone, chatId, message) {
       return;
     }
 
-    let response = aiResult.replyText;
-    if (hint === 'ORDER' && !aiResult.extractedData?.items?.length) {
-      response = 'Siap kak, mau pesan menu apa dan berapa jumlahnya? Ketik *menu* untuk melihat daftar menu yang tersedia.';
+    // Respons AI tidak boleh membuat aksi otomatis dari pesan bebas yang belum lolos format server.
+    if (!structuredData && (aiResult.intent === 'ORDER' || aiResult.intent === 'COMPLAINT')) {
+      const response = formatGuide(aiResult.intent, menus, branches);
+      await waha.sendMessage(chatId, response);
+      db.prepare('INSERT INTO whatsapp_messages(conversation_id,waha_message_id,direction,sender_type,content) VALUES (?,?,?,?,?)').run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', response);
+      return;
     }
+
+    let response = aiResult.replyText;
+    if (hint === 'ORDER' && !aiResult.extractedData?.items?.length) response = formatGuide('ORDER', menus, branches);
 
     // Jika ORDER, validasi branch dan items sebelum membuat pending action
     if (aiResult.intent === 'ORDER' && aiResult.extractedData?.items?.length > 0) {
@@ -302,7 +318,7 @@ async function processMessage(conversationId, phone, chatId, message) {
 
         // Simpan pending action
         bridge.savePendingAction(conversationId, 'ORDER_CONFIRMATION', {
-          customerName: aiResult.extractedData.customerName || 'Pelanggan',
+          customerName: aiResult.extractedData.customerName,
           branchId: branch.id,
           items: validated.items.map(i => ({ menuId: i.menuId, quantity: i.quantity })),
           notes: aiResult.extractedData.notes,
