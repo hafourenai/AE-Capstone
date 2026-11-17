@@ -128,6 +128,7 @@ function Admin() {
   if (!token)
     return (
       <section className="login">
+        <img className="login-brand-art" src="/brand-top-right.jpg" alt="Maskot Sambal Joelid" />
         <p className="eyebrow">RUANG OPERASIONAL</p>
         <h2>Masuk sebagai Admin</h2>
         {error && <p className="error">{error}</p>}
@@ -204,7 +205,7 @@ function Admin() {
   return (
     <section className="admin-shell">
       <aside className="admin-sidebar">
-        <div className="admin-brand"><span>SJ</span><div><b>Sambal Joelid</b><small>Operations</small></div></div>
+        <div className="admin-brand"><img src="/brand-top-right.jpg" alt="" /><div><b>Sambal Joelid</b><small>Pusat Operasional</small></div></div>
         <nav>
           <button className={kind === 'dashboard' ? 'active' : ''} onClick={() => { setKind('dashboard'); setDetail(null); }}><LayoutDashboard /> Ikhtisar</button>
           <button className={kind === 'orders' ? 'active' : ''} onClick={() => { setKind('orders'); setDetail(null); }}><ShoppingCart /> Pesanan <i>{kind === 'orders' ? data.length : ''}</i></button>
@@ -214,7 +215,10 @@ function Admin() {
         <div className="sidebar-foot"><span className="online-dot" /> Sistem online<button onClick={() => { localStorage.removeItem('token'); setToken(''); }}>Keluar →</button></div>
       </aside>
       <div className="admin-workspace">
-        <header className="admin-topbar"><div><p className="eyebrow">SAMBAL JOELID / ADMIN</p><h1>Dashboard Admin</h1><p>Pantau pesanan, keluhan, dan percakapan pelanggan secara real-time.</p></div><div className="admin-profile"><span>AD</span><b>Admin</b></div></header>
+        <header className="admin-topbar">
+          <div className="admin-heading"><p className="eyebrow">DAPUR KOMANDO / {title.toUpperCase()}</p><h1>{kind === 'dashboard' ? 'Halo, Admin!' : title}</h1><p>Pantau pesanan, keluhan, dan percakapan pelanggan secara real-time.</p></div>
+          <div className="admin-visual"><img src="/brand-top-right.jpg" alt="Maskot Sambal Joelid" /><div className="admin-profile"><span>AD</span><b>Admin</b></div></div>
+        </header>
         {kind === 'dashboard' ? <><div className="metric-grid overview-metrics">
           <article><ShoppingCart /><small>Pesanan</small><strong>{overview.orders.length}</strong><span>{overview.orders.filter(x => x.status === 'NEW').length} pesanan baru</span></article>
           <article><Headphones /><small>Keluhan</small><strong>{overview.complaints.length}</strong><span>{overview.complaints.filter(x => x.status === 'NEW').length} perlu ditinjau</span></article>
