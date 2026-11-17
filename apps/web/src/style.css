@@ -317,6 +317,8 @@ main:has(.customer-page) { max-width: none; padding: 0; }
 .customer-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
 .customer-form-row label { display: flex; flex-direction: column; gap: 7px; }
 .customer-form-row label input { margin-top: 0; }
+.form-field { display: flex; flex-direction: column; gap: 7px; }
+.form-field label { font-size: .74rem; font-weight: 500; color: var(--ink, #17301f); }
 .customer-form-card label { color: var(--ink); font-size: .74rem; font-weight: 500; }
 .customer-form-card input, .customer-form-card select, .customer-form-card textarea { width: 100%; min-width: 0; padding: 13px 14px; border: 1px solid #b8bea6; border-radius: 6px; background: #fff; color: var(--ink); outline-color: var(--green); }
 .customer-form-card .input-help { font-weight: 400; }
