@@ -10,12 +10,14 @@ const categoryLabels = {
 };
 
 export function formatGuide(kind, menus = [], branches = []) {
-  const menu = menus.find(item => item.active && item.stock > 0)?.name || '<nama menu dari daftar menu>';
+  const available = menus.filter(item => item.active && item.stock > 0);
+  const m1 = available[0]?.name || 'Nama Menu 1';
+  const m2 = available[1]?.name || 'Nama Menu 2';
   const branch = branches[0]?.name || '<nama cabang>';
   const example = kind === 'ORDER'
-    ? `Pesan\nNama: Budi\nCabang: ${branch}\nMenu: ${menu} x 2\nCatatan: Tidak terlalu pedas`
+    ? `Pesan\nNama: Budi\nCabang: ${branch}\nMenu: ${m1} x 2, ${m2} x 1\nCatatan: Tidak terlalu pedas`
     : `Keluhan\nNama: Budi\nCabang: ${branch}\nKategori: Pelayanan\nDeskripsi: Pesanan saya belum sampai setelah satu jam.`;
-  return `Agar ${kind === 'ORDER' ? 'pesanan' : 'keluhan'} otomatis dicatat, kirim *satu chat* sesuai format berikut (ganti contoh dengan data Anda):\n\n${example}\n\n${kind === 'ORDER' ? 'Untuk lebih dari satu menu, tambahkan baris Menu: berikutnya. Ketik *menu* untuk melihat menu tersedia. ' : 'Kategori: Kualitas makanan, Pelayanan, Kebersihan, Pesanan, atau Lainnya. '}Balas *YA* setelah ringkasan kami kirim.\n\nAtau gunakan formulir web: ${CUSTOMER_WEB_URL}`;
+  return `Agar ${kind === 'ORDER' ? 'pesanan' : 'keluhan'} otomatis dicatat, kirim *satu chat* sesuai format berikut:\n\n${example}\n\n${kind === 'ORDER' ? 'Beberapa menu bisa ditulis dalam satu baris dipisah koma. Ketik *menu* untuk melihat daftar menu. ' : 'Kategori: Kualitas makanan, Pelayanan, Kebersihan, Pesanan, atau Lainnya. '}Balas *YA* setelah ringkasan kami kirim.\n\nAtau pesan via formulir web: ${CUSTOMER_WEB_URL}`;
 }
 
 export function parseCustomerMessage(message, kind, menus = [], branches = []) {
@@ -37,14 +39,17 @@ export function parseCustomerMessage(message, kind, menus = [], branches = []) {
   if (!branch) return { error: 'Cabang tidak ditemukan. Gunakan nama cabang yang tersedia.' };
 
   if (kind === 'ORDER') {
-    const menuLines = fields.get('menu') || [];
-    if (!menuLines.length || menuLines.length > 20) return { error: 'Tuliskan 1–20 baris Menu: nama menu x jumlah.' };
+    const rawMenuLines = fields.get('menu') || [];
+    if (!rawMenuLines.length) return { error: 'Tuliskan minimal satu menu, contoh: Menu: Nasi x 2, Ayam x 1' };
+    // Setiap entri bisa mengandung koma, misal "Nasi x 2, Ayam x 3" — pecah per koma lalu trim
+    const menuEntries = rawMenuLines.flatMap(line => line.split(',').map(s => s.trim()).filter(Boolean));
+    if (menuEntries.length > 20) return { error: 'Maksimal 20 item menu dalam satu pesanan.' };
     const items = [];
-    for (const line of menuLines) {
-      const match = /^(.+?)\s+x\s+(\d+)$/i.exec(line);
-      if (!match || Number(match[2]) < 1 || Number(match[2]) > 99) return { error: 'Tulis menu seperti: Menu: Nama menu x 2 (jumlah 1–99).' };
+    for (const entry of menuEntries) {
+      const match = /^(.+?)\s+x\s*(\d+)$/i.exec(entry);
+      if (!match || Number(match[2]) < 1 || Number(match[2]) > 99) return { error: `Format menu tidak dikenali: "${entry}". Contoh yang benar: Nasi x 2` };
       const menu = menus.find(item => item.active && item.stock > 0 && (normalize(item.name) === normalize(match[1]) || normalize(item.id) === normalize(match[1])));
-      if (!menu) return { error: `Menu "${match[1]}" tidak tersedia. Ketik *menu* untuk melihat daftar terbaru.` };
+      if (!menu) return { error: `Menu "${match[1].trim()}" tidak tersedia. Ketik *menu* untuk melihat daftar terbaru.` };
       items.push({ menuId: menu.id, quantity: Number(match[2]) });
     }
     const notes = fields.get('catatan') || '';

@@ -10,19 +10,35 @@ import { detectIntentHint, normalizeAIOutput, selectRelevantMenus, parseAIComple
 import { normalizeCatalogCsv } from '../src/services/catalog.js';
 import { formatGuide, parseCustomerMessage } from '../src/services/messageFormat.js';
 
-const exampleMenus = [{ id: 'ayam-geprek', name: 'Ayam Geprek', active: 1, stock: 10 }];
+const exampleMenus = [
+  { id: 'ayam-geprek', name: 'Ayam Geprek', active: 1, stock: 10 },
+  { id: 'nasi-putih', name: 'Nasi Putih', active: 1, stock: 20 },
+];
 const exampleBranches = [{ id: 'pusat', name: 'Cabang Pusat' }];
 
 test('WhatsApp guide uses actual catalog data and web alternative', () => {
-  assert.match(formatGuide('ORDER', exampleMenus, exampleBranches), /Menu: Ayam Geprek x 2/);
+  const guide = formatGuide('ORDER', exampleMenus, exampleBranches);
+  assert.match(guide, /Ayam Geprek x 2, Nasi Putih x 1/);
   assert.match(formatGuide('COMPLAINT', exampleMenus, exampleBranches), /https:\/\/joelid\.hontalk\.my\.id\//);
+});
+
+test('structured WhatsApp order supports comma-separated menus on one line', () => {
+  const result = parseCustomerMessage(
+    'Pesan\nNama: Nova\nCabang: Cabang Pusat\nMenu: Nasi Putih x 2, Ayam Geprek x 3',
+    'ORDER', exampleMenus, exampleBranches
+  );
+  assert.deepEqual(result.data, {
+    customerName: 'Nova', branchId: 'pusat',
+    items: [{ menuId: 'nasi-putih', quantity: 2 }, { menuId: 'ayam-geprek', quantity: 3 }],
+    notes: '',
+  });
 });
 
 test('structured WhatsApp order is validated against active menu and branch', () => {
   assert.deepEqual(parseCustomerMessage('Pesan\nNama: Budi\nCabang: Cabang Pusat\nMenu: Ayam Geprek x 2\nCatatan: Tidak pedas', 'ORDER', exampleMenus, exampleBranches).data, {
     customerName: 'Budi', branchId: 'pusat', items: [{ menuId: 'ayam-geprek', quantity: 2 }], notes: 'Tidak pedas',
   });
-  assert.match(parseCustomerMessage('Pesan\nNama: Budi\nCabang: Cabang Pusat\nMenu: Ayam Geprek x 0', 'ORDER', exampleMenus, exampleBranches).error, /jumlah 1–99/);
+  assert.match(parseCustomerMessage('Pesan\nNama: Budi\nCabang: Cabang Pusat\nMenu: Ayam Geprek x 0', 'ORDER', exampleMenus, exampleBranches).error, /Format menu tidak dikenali/);
   assert.match(parseCustomerMessage('Pesan\nNama: Budi\nCabang: Salah\nMenu: Ayam Geprek x 2', 'ORDER', exampleMenus, exampleBranches).error, /Cabang/);
   assert.match(parseCustomerMessage('Pesan\nNama: Budi\nCabang: Cabang Pusat\nMenu: Menu Palsu x 2', 'ORDER', exampleMenus, exampleBranches).error, /tidak tersedia/);
 });
