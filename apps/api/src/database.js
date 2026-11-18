@@ -53,7 +53,7 @@ export function openDatabase(filename) {
     db.exec('ALTER TABLE customer_complaints ADD COLUMN whatsapp_conversation_id INTEGER REFERENCES whatsapp_conversations(id)');
   }
 
-  // Tabel WhatsApp baru
+  // Tabel WhatsApp
   db.exec(`
     CREATE TABLE IF NOT EXISTS whatsapp_conversations (
       id INTEGER PRIMARY KEY, phone TEXT NOT NULL UNIQUE, chat_id TEXT, customer_name TEXT,
@@ -91,7 +91,24 @@ export function openDatabase(filename) {
   if (!menuColumns.some(col => col.name === 'stock')) db.exec('ALTER TABLE menus ADD COLUMN stock INTEGER NOT NULL DEFAULT 999');
   if (!menuColumns.some(col => col.name === 'description')) db.exec("ALTER TABLE menus ADD COLUMN description TEXT NOT NULL DEFAULT ''");
   if (!menuColumns.some(col => col.name === 'aliases')) db.exec("ALTER TABLE menus ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'");
+
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_wa_conv_chat_id ON whatsapp_conversations(chat_id)');
+
+  // Cart untuk percakapan interaktif order
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS whatsapp_cart (
+      id INTEGER PRIMARY KEY,
+      conversation_id INTEGER NOT NULL UNIQUE REFERENCES whatsapp_conversations(id) ON DELETE CASCADE,
+      customer_name TEXT,
+      branch_id TEXT,
+      items_json TEXT NOT NULL DEFAULT '[]',
+      notes TEXT,
+      step TEXT NOT NULL DEFAULT 'COLLECTING' CHECK(step IN ('COLLECTING','CONFIRMING','DONE')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_wa_cart_conv ON whatsapp_cart(conversation_id);
+  `);
 
   const count = db.prepare('SELECT COUNT(*) AS count FROM menus').get().count;
   if (!count) {
