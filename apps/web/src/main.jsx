@@ -48,8 +48,7 @@ function Customer({ mode, setMode }) {
 
 function SourceBadge({ source }) {
   const color = source === 'WHATSAPP' ? '#25D366' : '#666';
-  const label = source === 'WHATSAPP' ? '💬' : '🌐';
-  return <span style={{ display: 'inline-block', fontSize: '0.7em', marginLeft: '0.5em', padding: '0.25em 0.5em', backgroundColor: color, color: '#fff', borderRadius: '0.25em' }}>{label} {source}</span>;
+  return <span style={{ display: 'inline-block', fontSize: '0.7em', marginLeft: '0.5em', padding: '0.25em 0.5em', backgroundColor: color, color: '#fff', borderRadius: '0.25em' }}>{source}</span>;
 }
 
 function WhatsAppChat({ token, conversationId, onClose }) {
@@ -414,7 +413,7 @@ function Admin() {
                   <b>{x.customer_name || 'Pelanggan WhatsApp'}</b>
                   <small>
                     {kind !== 'whatsapp' ? (x.branch_name || 'Tanpa cabang') : 'Percakapan langsung'}
-                    {x.created_at && <span className="row-timestamp"> • 🕒 {formatDateTime(x.created_at)}</span>}
+                    {x.created_at && <span className="row-timestamp"> • {formatDateTime(x.created_at)}</span>}
                   </small>
                 </span>
                 <em className={`status-badge status-${(x.status || x.state).toLowerCase()}`}>{statusLabel(x.status || x.state)}</em>
@@ -436,7 +435,7 @@ function Admin() {
               {detail.created_at && (
                 <div className="detail-timestamp">
                   <small>Waktu Masuk</small>
-                  <span>📅 {formatDateTime(detail.created_at)}</span>
+                  <span>{formatDateTime(detail.created_at)}</span>
                 </div>
               )}
             </div>
