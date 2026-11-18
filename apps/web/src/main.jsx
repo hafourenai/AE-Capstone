@@ -1,11 +1,24 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { io } from 'socket.io-client';
-import { Headphones, LayoutDashboard, MessageCircle, Send, ShoppingCart, Wifi, X } from 'lucide-react';
+import { ArrowUpDown, Filter, Headphones, LayoutDashboard, MessageCircle, RotateCcw, Send, ShoppingCart, Wifi, X } from 'lucide-react';
 import './style.css';
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api/v1';
 const currency = (v) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(v);
+const formatDateTime = (v) => {
+  if (!v) return '';
+  const d = new Date(v.includes('T') ? v : v.replace(' ', 'T') + 'Z');
+  const valid = !isNaN(d.getTime()) ? d : new Date(v);
+  return new Intl.DateTimeFormat('id-ID', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(valid);
+};
 const request = async (path, options = {}) => {
   const response = await fetch(`${API}${path}`, {
     ...options,
@@ -92,6 +105,17 @@ function WhatsAppChat({ token, conversationId, onClose }) {
 
 function Admin() {
   const [token, setToken] = useState(localStorage.token || ''), [kind, setKind] = useState('dashboard'), [data, setData] = useState([]), [overview, setOverview] = useState({ orders: [], complaints: [], whatsapp: [] }), [health, setHealth] = useState(null), [detail, setDetail] = useState(null), [error, setError] = useState(''), [chatConv, setChatConv] = useState(null), [saving, setSaving] = useState(false);
+  const [branches, setBranches] = useState([]);
+  const [filterStatus, setFilterStatus] = useState('ALL');
+  const [filterBranch, setFilterBranch] = useState('ALL');
+  const [filterDatePreset, setFilterDatePreset] = useState('ALL');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [sortOrder, setSortOrder] = useState('ASC'); // Default 'ASC': pesanan masuk lebih dulu
+
+  useEffect(() => {
+    request('/public/branches').then(setBranches).catch(() => {});
+  }, []);
 
   const load = () => {
     if (!token) return;
@@ -207,15 +231,87 @@ function Admin() {
   const activeCount = data.filter(item => ['CONFIRMED', 'PROCESSING', 'IN_REVIEW', 'IN_PROGRESS', 'ADMIN_ACTIVE'].includes(item.status || item.state)).length;
   const statusLabel = value => ({ NEW: 'Baru', CONFIRMED: 'Dikonfirmasi', PROCESSING: 'Diproses', COMPLETED: 'Selesai', CANCELLED: 'Dibatalkan', IN_REVIEW: 'Ditinjau', IN_PROGRESS: 'Ditangani', RESOLVED: 'Terselesaikan', CLOSED: 'Ditutup', AI_ACTIVE: 'AI aktif', WAITING_ADMIN: 'Menunggu admin', ADMIN_ACTIVE: 'Admin aktif' }[value] || value);
 
+  const resetFilters = () => {
+    setFilterStatus('ALL');
+    setFilterBranch('ALL');
+    setFilterDatePreset('ALL');
+    setStartDate('');
+    setEndDate('');
+    setSortOrder('ASC');
+  };
+
+  const filteredData = useMemo(() => {
+    if (kind === 'whatsapp' || kind === 'dashboard') return data;
+    let list = [...data];
+
+    if (filterStatus !== 'ALL') {
+      list = list.filter(item => (item.status || item.state) === filterStatus);
+    }
+
+    if (filterBranch !== 'ALL') {
+      list = list.filter(item => String(item.branch_id) === String(filterBranch));
+    }
+
+    if (filterDatePreset !== 'ALL') {
+      const now = new Date();
+      list = list.filter(item => {
+        if (!item.created_at) return true;
+        const d = new Date(item.created_at.includes('T') ? item.created_at : item.created_at.replace(' ', 'T') + 'Z');
+        const itemDate = !isNaN(d.getTime()) ? d : new Date(item.created_at);
+
+        if (filterDatePreset === 'TODAY') {
+          return itemDate.toDateString() === now.toDateString();
+        }
+        if (filterDatePreset === '7DAYS') {
+          const past7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          return itemDate >= past7;
+        }
+        if (filterDatePreset === '30DAYS') {
+          const past30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          return itemDate >= past30;
+        }
+        if (filterDatePreset === 'CUSTOM') {
+          if (startDate) {
+            const s = new Date(startDate);
+            s.setHours(0, 0, 0, 0);
+            if (itemDate < s) return false;
+          }
+          if (endDate) {
+            const e = new Date(endDate);
+            e.setHours(23, 59, 59, 999);
+            if (itemDate > e) return false;
+          }
+          return true;
+        }
+        return true;
+      });
+    }
+
+    list.sort((a, b) => {
+      const parseTime = (val) => {
+        if (!val) return 0;
+        const d = new Date(val.includes('T') ? val : val.replace(' ', 'T') + 'Z');
+        return !isNaN(d.getTime()) ? d.getTime() : new Date(val).getTime() || 0;
+      };
+      const tA = parseTime(a.created_at);
+      const tB = parseTime(b.created_at);
+      return sortOrder === 'ASC' ? tA - tB : tB - tA;
+    });
+
+    return list;
+  }, [data, kind, filterStatus, filterBranch, filterDatePreset, startDate, endDate, sortOrder]);
+
+  const hasActiveFilters = filterStatus !== 'ALL' || filterBranch !== 'ALL' || filterDatePreset !== 'ALL' || startDate || endDate || sortOrder !== 'ASC';
+
   return (
     <section className="admin-shell">
       <aside className="admin-sidebar">
         <div className="admin-brand"><img src="/brand-top-right.jpg" alt="" /><div><b>Sambal Joelid</b><small>Pusat Operasional</small></div></div>
         <nav>
-          <button className={kind === 'dashboard' ? 'active' : ''} onClick={() => { setKind('dashboard'); setDetail(null); }}><LayoutDashboard /> Ikhtisar</button>
-          <button className={kind === 'orders' ? 'active' : ''} onClick={() => { setKind('orders'); setDetail(null); }}><ShoppingCart /> Pesanan <i>{kind === 'orders' ? data.length : ''}</i></button>
-          <button className={kind === 'complaints' ? 'active' : ''} onClick={() => { setKind('complaints'); setDetail(null); }}><Headphones /> Keluhan <i>{kind === 'complaints' ? data.length : ''}</i></button>
-          <button className={kind === 'whatsapp' ? 'active' : ''} onClick={() => { setKind('whatsapp'); setDetail(null); }}><MessageCircle /> WhatsApp <i>{kind === 'whatsapp' ? data.length : ''}</i></button>
+          <button className={kind === 'dashboard' ? 'active' : ''} onClick={() => { setKind('dashboard'); setDetail(null); resetFilters(); }}><LayoutDashboard /> Ikhtisar</button>
+          <button className={kind === 'orders' ? 'active' : ''} onClick={() => { setKind('orders'); setDetail(null); resetFilters(); }}><ShoppingCart /> Pesanan <i>{kind === 'orders' ? data.length : ''}</i></button>
+          <button className={kind === 'complaints' ? 'active' : ''} onClick={() => { setKind('complaints'); setDetail(null); resetFilters(); }}><Headphones /> Keluhan <i>{kind === 'complaints' ? data.length : ''}</i></button>
+          <button className={kind === 'whatsapp' ? 'active' : ''} onClick={() => { setKind('whatsapp'); setDetail(null); resetFilters(); }}><MessageCircle /> WhatsApp <i>{kind === 'whatsapp' ? data.length : ''}</i></button>
         </nav>
         <div className="sidebar-foot"><span className="online-dot" /> Sistem online<button onClick={() => { localStorage.removeItem('token'); setToken(''); }}>Keluar →</button></div>
       </aside>
@@ -236,20 +332,114 @@ function Admin() {
         {error && <p className="error">{error}</p>}
         {kind !== 'dashboard' && <div className={`admin-panel ${detail ? 'has-detail' : ''}`}>
           <section className="data-panel">
-            <div className="panel-heading"><div><p className="eyebrow">MEJA OPERASIONAL</p><h2>{title}</h2></div><span>{data.length} data</span></div>
-            <div className="table-head"><span>Referensi</span><span>Pelanggan / Cabang</span><span>Status</span></div>
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">MEJA OPERASIONAL</p>
+                <h2>{title}</h2>
+              </div>
+              <span className="panel-count">{filteredData.length} dari {data.length} data</span>
+            </div>
+
+            {kind !== 'whatsapp' && (
+              <div className="admin-filter-bar">
+                <div className="filter-group">
+                  <label htmlFor="f-status">Status</label>
+                  <select id="f-status" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                    <option value="ALL">Semua Status</option>
+                    {status.map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
+                  </select>
+                </div>
+
+                {kind === 'orders' && (
+                  <div className="filter-group">
+                    <label htmlFor="f-branch">Cabang</label>
+                    <select id="f-branch" value={filterBranch} onChange={e => setFilterBranch(e.target.value)}>
+                      <option value="ALL">Semua Cabang</option>
+                      {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                <div className="filter-group">
+                  <label htmlFor="f-date">Rentang Waktu</label>
+                  <select id="f-date" value={filterDatePreset} onChange={e => setFilterDatePreset(e.target.value)}>
+                    <option value="ALL">Semua Waktu</option>
+                    <option value="TODAY">Hari Ini</option>
+                    <option value="7DAYS">7 Hari Terakhir</option>
+                    <option value="30DAYS">30 Hari Terakhir</option>
+                    <option value="CUSTOM">Pilih Tanggal...</option>
+                  </select>
+                </div>
+
+                {filterDatePreset === 'CUSTOM' && (
+                  <div className="filter-group date-range-group">
+                    <label>Periode</label>
+                    <div className="date-inputs">
+                      <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} aria-label="Dari tanggal" />
+                      <span>-</span>
+                      <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} aria-label="Sampai tanggal" />
+                    </div>
+                  </div>
+                )}
+
+                <div className="filter-group sort-group">
+                  <label>Urutan</label>
+                  <button
+                    type="button"
+                    className="sort-toggle-btn"
+                    onClick={() => setSortOrder(prev => prev === 'ASC' ? 'DESC' : 'ASC')}
+                    title="Klik untuk mengubah urutan"
+                  >
+                    <ArrowUpDown size={13} />
+                    {sortOrder === 'ASC' ? 'Masuk Lebih Dulu' : 'Terbaru Dulu'}
+                  </button>
+                </div>
+
+                {hasActiveFilters && (
+                  <div className="filter-group reset-group">
+                    <label>&nbsp;</label>
+                    <button type="button" className="reset-filter-btn" onClick={resetFilters} title="Reset semua filter">
+                      <RotateCcw size={12} /> Reset
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="table-head"><span>Referensi</span><span>Pelanggan / Cabang / Waktu</span><span>Status</span></div>
             <div className="table">
-              {data.map(x => <button className={`row ${detail?.id === x.id ? 'selected' : ''}`} key={x.id} onClick={() => { open(x.id); setChatConv(null); }}>
+              {filteredData.map(x => <button className={`row ${detail?.id === x.id ? 'selected' : ''}`} key={x.id} onClick={() => { open(x.id); setChatConv(null); }}>
                 <b>{x.reference_number || `+${x.phone}`}</b>
-                <span>{x.customer_name || 'Pelanggan WhatsApp'}<small>{kind !== 'whatsapp' ? x.branch_name || 'Tanpa cabang' : 'Percakapan langsung'}</small></span>
+                <span>
+                  <b>{x.customer_name || 'Pelanggan WhatsApp'}</b>
+                  <small>
+                    {kind !== 'whatsapp' ? (x.branch_name || 'Tanpa cabang') : 'Percakapan langsung'}
+                    {x.created_at && <span className="row-timestamp"> • 🕒 {formatDateTime(x.created_at)}</span>}
+                  </small>
+                </span>
                 <em className={`status-badge status-${(x.status || x.state).toLowerCase()}`}>{statusLabel(x.status || x.state)}</em>
               </button>)}
-              {!data.length && <div className="empty-state"><b>Belum ada data</b><span>Data baru akan muncul otomatis di sini.</span></div>}
+              {!filteredData.length && (
+                <div className="empty-state">
+                  <b>{data.length ? 'Tidak ada data yang cocok dengan filter' : 'Belum ada data'}</b>
+                  <span>{data.length ? 'Coba ubah opsi filter atau tekan tombol Reset.' : 'Data baru akan muncul otomatis di sini.'}</span>
+                </div>
+              )}
             </div>
           </section>
           {detail && <aside className="detail-panel">
             <div className="detail-heading"><div><p className="eyebrow">DETAIL</p><h3>{detail.reference_number || `+${detail.phone}`}</h3></div><button onClick={() => setDetail(null)}>×</button></div>
-            <div className="customer-card"><small>Pelanggan</small><b>{detail.customer_name || 'Pelanggan WhatsApp'}</b><span>{detail.customer_phone || detail.phone}</span></div>
+            <div className="customer-card">
+              <small>Pelanggan</small>
+              <b>{detail.customer_name || 'Pelanggan WhatsApp'}</b>
+              <span>{detail.customer_phone || detail.phone}</span>
+              {detail.created_at && (
+                <div className="detail-timestamp">
+                  <small>Waktu Masuk</small>
+                  <span>📅 {formatDateTime(detail.created_at)}</span>
+                </div>
+              )}
+            </div>
             {detail.items?.length > 0 && <div className="order-items"><small>Rincian pesanan</small>{detail.items.map(i => <div key={i.id}><span>{i.menu_name_snapshot} × {i.quantity}</span><b>{currency(i.subtotal)}</b></div>)}</div>}
             {kind === 'whatsapp' ? <>
               <label>Mode percakapan<select disabled={saving} value={detail.state} onChange={change}><option value="AI_ACTIVE">AI aktif</option><option value="WAITING_ADMIN">Menunggu admin</option><option value="ADMIN_ACTIVE">Admin aktif</option></select></label>
