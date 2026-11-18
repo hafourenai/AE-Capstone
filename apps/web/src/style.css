@@ -340,20 +340,41 @@ main:has(.customer-page) { max-width: none; padding: 0; }
   .customer-header-note { display: none; }
   .customer-hero { grid-template-columns: 1fr; }
   .customer-hero-copy { padding: 40px 25px; }
+  .customer-hero h1 { font-size: clamp(2.2rem, 8vw, 3rem); }
   .customer-hero-art { min-height: 240px; border: 0; border-top: 6px solid var(--yellow); }
   .customer-hero-art img { object-position: center 43%; }
+  .customer-hero-actions { flex-direction: column; gap: 10px; }
+  .customer-hero-actions button { width: 100%; justify-content: space-between; }
   .customer-choices, .customer-form-row { grid-template-columns: 1fr; }
   .customer-choices { gap: 14px; padding: 0 20px 55px; }
   .customer-intro { padding: 45px 20px 22px; }
+  .customer-form-page { margin: 20px auto 50px; }
   .customer-form-banner img { width: 28%; }
+  .customer-form-banner h1 { font-size: clamp(1.5rem, 5vw, 2rem); }
+  .customer-success { margin: 40px 20px; padding: 32px 28px; }
+  .customer-success h2 { font-size: 1.7rem; }
 }
 @media (max-width: 450px) {
   .customer-header-tag { display: none; }
   .customer-choice { grid-template-columns: 48px 1fr auto; gap: 12px; padding: 18px; }
   .customer-choice-icon { width: 44px; height: 44px; }
   .customer-choice b { font-size: 1.2rem; }
-  .customer-form-banner { padding-left: 20px; }
-  .customer-form-banner img { width: 25%; }
+  .customer-form-banner { padding: 20px; }
+  .customer-form-banner img { display: none; }
+  .customer-form-card { padding: 20px 18px; }
+  .customer-form-card input, .customer-form-card select, .customer-form-card textarea { min-height: 48px; }
+  .customer-form-card .menu { gap: 10px; }
+  .customer-form-card .menu input { min-height: 44px; min-width: 70px; }
   .customer-footer { flex-direction: column; gap: 5px; }
-  .customer-success { margin: 35px 16px; padding: 25px; }
+  .customer-success { margin: 30px 14px; padding: 24px 20px; }
+}
+@media (max-width: 380px) {
+  .customer-hero h1 { font-size: 2rem; }
+  .customer-hero-copy { padding: 32px 18px; }
+  .customer-choice-arrow { display: none; }
+  .customer-choice { grid-template-columns: 44px 1fr; }
+  .customer-form-page { padding: 0 14px; }
+  .customer-success { margin: 20px 10px; padding: 20px 16px; }
+  .customer-success h2 { font-size: 1.4rem; }
+  .customer-success strong { font-size: 1rem; }
 }
