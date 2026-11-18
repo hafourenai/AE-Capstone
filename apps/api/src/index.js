@@ -242,6 +242,12 @@ async function processMessage(conversationId, phone, chatId, message) {
     // ── ORDER FLOW — cart interaktif ──
     let cart = cartManager.get(conversationId);
 
+    // Jika pelanggan menyebut kata yang mengindikasikan ingin memesan baru dari awal
+    const isRestartOrder = /\b(mau pesan|pesan lagi|order baru|mulai ulang|ulang pesanan|ganti pesanan|hapus semua)\b/i.test(message);
+    if (isRestartOrder && cart) {
+      cart = cartManager.create(conversationId);
+    }
+
     // Jika sedang menunggu konfirmasi order
     if (cart && cart.step === 'CONFIRMING') {
       if (cartManager.isConfirmYes(message)) {

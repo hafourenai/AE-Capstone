@@ -147,11 +147,13 @@ export class CartManager {
     this.db = db;
   }
 
-  /** Ambil cart aktif untuk conversation (step != DONE), atau kembalikan null */
-  get(conversationId) {
+  /** Ambil cart aktif untuk conversation (step != DONE), dengan TTL 30 menit */
+  get(conversationId, maxAgeMinutes = 30) {
     const row = this.db.prepare(
-      "SELECT * FROM whatsapp_cart WHERE conversation_id = ? AND step != 'DONE'"
-    ).get(conversationId);
+      `SELECT * FROM whatsapp_cart 
+       WHERE conversation_id = ? AND step != 'DONE' 
+         AND updated_at >= datetime('now', '-' || ? || ' minutes')`
+    ).get(conversationId, maxAgeMinutes);
     if (!row) return null;
     const cart = { ...row, items: JSON.parse(row.items_json || '[]') };
     if (cart.customer_name && INVALID_NAMES.has(cart.customer_name.trim().toLowerCase())) {

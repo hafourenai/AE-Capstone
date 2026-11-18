@@ -179,6 +179,7 @@ Menu: ${menuLines}
 Cabang: ${branchLines}
 Cart: ${cartCtx}
 Aturan penting:
+- Jika pelanggan memesan paket combo (misal "Paket Combo Jukut Lele"), masukkan HANYA 1 action untuk paket combo tersebut. DILARANG memecah atau menambahkan item komponennya (jangan tambah jukut atau lele terpisah).
 - JANGAN sertakan SET_NAME jika pelanggan belum menyebut nama orang asli. Jangan gunakan kata "nama" atau "kakak".
 - Jika bukan pesanan: intent=UNKNOWN, actions=[].`;
 
