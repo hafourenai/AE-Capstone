@@ -315,14 +315,14 @@ async function processMessage(conversationId, phone, chatId, message) {
     }
 
     // ── Shortcut: parse nama dari teks langsung (tanpa AI) ──
-    if (!cart.customer_name && cart.items.length > 0 && cart.branch_id) {
+    if (!cart.customer_name && cart.items.length > 0) {
       let directName = parseNameFromText(message);
       // Jika pesan 1-3 kata dan hanya berisi huruf (misal: "Aldi", "Budi Santoso")
       if (!directName && /^[a-zA-Z\s]{2,30}$/.test(message.trim())) {
         const cleaned = message.trim();
         const lower = cleaned.toLowerCase();
-        const nonNames = ['ya', 'tidak', 'batal', 'ok', 'oke', 'pesan', 'order', 'menu', 'admin', 'pusat', 'barat'];
-        if (!nonNames.includes(lower)) {
+        const nonNames = ['ya', 'tidak', 'batal', 'ok', 'oke', 'pesan', 'order', 'menu', 'admin', 'pusat', 'barat', 'timur', 'utara', 'selatan', 'tengah'];
+        if (!nonNames.includes(lower) && !branches.some(b => b.name.toLowerCase().includes(lower) || b.id.toLowerCase() === lower)) {
           directName = cleaned;
         }
       }
@@ -337,6 +337,12 @@ async function processMessage(conversationId, phone, chatId, message) {
           cartManager.save(cart);
           const { text: summary } = cartManager.buildSummary(cart, menus, branches);
           await send(summary);
+          return;
+        }
+        // Nama sudah tersimpan, lanjut cek field berikutnya (branch)
+        if (missing.includes('branch')) {
+          const branchList = branches.map(b => `• *${b.name}*`).join('\n');
+          await send(`Siap Kak ${directName}! Mau dipesan dari cabang mana?\n\n${branchList}`);
           return;
         }
       }
