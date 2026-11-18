@@ -196,6 +196,9 @@ export class CartManager {
    * Terapkan daftar actions dari AI ke cart.
    *
    * Perubahan penting vs versi lama:
+   * - Filter anti-halusinasi & anti-dekomposisi: jika ada paket combo yang dimasukkan,
+   *   cegah item komponen pecahan (misal 'jukut', 'lele') ikut masuk jika muncul bersamaan.
+   * - Cek duplikasi token (misal 'nasi jeruk' vs 'nasi').
    * - SET_NAME: validasi nama, tolak placeholder/generic
    * - ADD_ITEM: jika item sudah ada di cart, SET qty bukan ADD
    *   (mencegah quantity berlipat pada retry)
@@ -203,7 +206,65 @@ export class CartManager {
    */
   applyActions(cart, actions, menus, branches) {
     const warnings = [];
+
+    // Pre-filtering: jika ada beberapa ADD_ITEM yang resolved ke menu,
+    // bersihkan pecahan paket combo (sub-komponen) dan sub-item yang tertelan.
+    const resolvedAdds = [];
     for (const action of actions) {
+      if (action.type === 'ADD_ITEM') {
+        const menu = resolveMenu(action.menuHint, menus);
+        resolvedAdds.push({ action, menu, hint: normalize(action.menuHint) });
+      }
+    }
+
+    // Identifikasi jika ada menu paket combo dalam aksi saat ini
+    const comboAdds = resolvedAdds.filter(x => x.menu && /combo|paket/i.test(x.menu.name));
+    // Identifikasi menu spesifik multi-kata (misal "Nasi Jeruk")
+    const specificAdds = resolvedAdds.filter(x => x.menu && x.menu.name.trim().split(/\s+/).length > 1);
+
+    const filteredActions = actions.filter(action => {
+      if (action.type !== 'ADD_ITEM') return true;
+      const resolved = resolvedAdds.find(x => x.action === action);
+      if (!resolved || !resolved.menu) return true; // Biarkan lolos untuk diproses warning not found
+
+      const targetName = resolved.menu.name.toLowerCase();
+      const hint = resolved.hint;
+
+      // 1. Jika menu ini adalah komponen/sub-kata dari salah satu paket combo yang sedang dipesan
+      for (const combo of comboAdds) {
+        if (combo.menu.id !== resolved.menu.id) {
+          const comboName = combo.menu.name.toLowerCase();
+          // Cek apakah hint pelanggan atau nama menu ini mengandung kata yang merupakan bagian dari nama combo
+          const targetTokens = targetName.split(/\s+/).filter(t => t.length >= 3 && !/goreng|bakar|paket|combo/i.test(t));
+          const hintTokens = hint.split(/\s+/).filter(t => t.length >= 3 && !/goreng|bakar|paket|combo/i.test(t));
+          const matchesTarget = targetTokens.length > 0 && targetTokens.some(t => comboName.includes(t));
+          const matchesHint = hintTokens.length > 0 && hintTokens.some(t => comboName.includes(t));
+
+          if (matchesTarget || matchesHint) {
+            // Ini adalah dekomposisi halusinasi dari paket combo (misal jukut, lele, dll)
+            return false;
+          }
+        }
+      }
+
+      // 2. Jika menu ini adalah nama generic (misal "Nasi" / "Nasi Putih") padahal ada menu spesifik ("Nasi Jeruk") yang dipesan
+      for (const spec of specificAdds) {
+        if (spec.menu.id !== resolved.menu.id) {
+          const specName = spec.menu.name.toLowerCase();
+          // Misal targetName atau hint adalah "nasi", sedangkan ada "nasi jeruk"
+          if ((targetName.startsWith('nasi') || hint.includes('nasi')) && specName.startsWith('nasi ') && !specName.includes('putih')) {
+            // Jika hint hanya "nasi" tanpa qualifier
+            if (hint === 'nasi' || targetName === 'nasi' || targetName === 'nasi putih') {
+              return false;
+            }
+          }
+        }
+      }
+
+      return true;
+    });
+
+    for (const action of filteredActions) {
       switch (action.type) {
         case 'SET_NAME': {
           const name = String(action.value || '').trim();

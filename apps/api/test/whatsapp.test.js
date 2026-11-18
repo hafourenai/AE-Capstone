@@ -270,6 +270,37 @@ test('CartManager.applyActions: REMOVE_ITEM (skenario 10 — hapus item)', (t) =
   assert.equal(cart.items[0].menuId, 'nasi-putih');
 });
 
+test('CartManager.applyActions: anti-dekomposisi paket combo dan nasi duplikat', (t) => {
+  const db = temporaryDatabase(t);
+  db.prepare("INSERT INTO whatsapp_conversations(id,phone,state) VALUES (1,'628123456789','AI_ACTIVE')").run();
+  const cm = new CartManager(db);
+  const cart = cm.create(1);
+
+  const customMenus = [
+    { id: 'combo-jukut-lele', name: 'Paket Combo Jukut Lele', price: 26500, active: 1, stock: 10 },
+    { id: 'nasi-jeruk', name: 'Nasi Jeruk', price: 3500, active: 1, stock: 20 },
+    { id: 'jukut-goreng', name: 'Jukut Goreng', price: 5000, active: 1, stock: 10 },
+    { id: 'lele-goreng', name: 'Lele Goreng', price: 7000, active: 1, stock: 10 },
+    { id: 'nasi-putih', name: 'Nasi', price: 2500, active: 1, stock: 50 },
+  ];
+
+  // Simulasi halusinasi AI yang memecah paket combo dan menambahkan nasi generic
+  cm.applyActions(cart, [
+    { type: 'ADD_ITEM', menuHint: 'Paket Combo Jukut Lele', quantity: 3 },
+    { type: 'ADD_ITEM', menuHint: 'Nasi', quantity: 11 },
+    { type: 'ADD_ITEM', menuHint: 'Jukut', quantity: 3 },
+    { type: 'ADD_ITEM', menuHint: 'Lele', quantity: 1 },
+    { type: 'ADD_ITEM', menuHint: 'Nasi Jeruk', quantity: 10 },
+  ], customMenus, BRANCHES);
+
+  assert.equal(cart.items.length, 2);
+  assert.equal(cart.items.find(i => i.menuId === 'combo-jukut-lele')?.quantity, 3);
+  assert.equal(cart.items.find(i => i.menuId === 'nasi-jeruk')?.quantity, 10);
+  assert.equal(cart.items.find(i => i.menuId === 'jukut-goreng'), undefined);
+  assert.equal(cart.items.find(i => i.menuId === 'lele-goreng'), undefined);
+  assert.equal(cart.items.find(i => i.menuId === 'nasi-putih'), undefined);
+});
+
 test('CartManager.applyActions: warning menu tidak tersedia (skenario 13)', (t) => {
   const db = temporaryDatabase(t);
   db.prepare("INSERT INTO whatsapp_conversations(id,phone,state) VALUES (1,'628123456789','AI_ACTIVE')").run();
