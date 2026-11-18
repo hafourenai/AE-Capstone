@@ -316,8 +316,18 @@ async function processMessage(conversationId, phone, chatId, message) {
     }
 
     // ── Shortcut: parse nama dari teks langsung (tanpa AI) ──
-    if (!cart.customer_name && cart.items.length > 0 && !cart.branch_id === false) {
-      const directName = parseNameFromText(message);
+    if (!cart.customer_name && cart.items.length > 0 && cart.branch_id) {
+      let directName = parseNameFromText(message);
+      // Jika pesan 1-3 kata dan hanya berisi huruf (misal: "Aldi", "Budi Santoso")
+      if (!directName && /^[a-zA-Z\s]{2,30}$/.test(message.trim())) {
+        const cleaned = message.trim();
+        const lower = cleaned.toLowerCase();
+        const nonNames = ['ya', 'tidak', 'batal', 'ok', 'oke', 'pesan', 'order', 'menu', 'admin', 'pusat', 'barat'];
+        if (!nonNames.includes(lower)) {
+          directName = cleaned;
+        }
+      }
+
       if (directName) {
         cart.customer_name = directName;
         cartManager.save(cart);
