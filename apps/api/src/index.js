@@ -284,7 +284,6 @@ async function processMessage(conversationId, phone, chatId, message) {
 
     // ── Cart: buat baru jika belum ada ──
     // Reset otomatis jika cart lama DONE dan pesan terindikasi order baru
-    let cart = cartManager.get(conversationId);
     if (!cart) {
       if (hint === 'ORDER' || hint === null) {
         cart = cartManager.create(conversationId);

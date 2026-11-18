@@ -294,9 +294,9 @@ export class CartManager {
       return sum + (menu ? menu.price * item.quantity : 0);
     }, 0);
 
-    const nameStr = cart.customer_name ? `, Kak ${cart.customer_name}` : '';
+    const nameStr = cart.customer_name ? ` untuk *${cart.customer_name}*` : '';
     return {
-      text: `📋 *Ringkasan pesanan Anda${nameStr}:*\n\n${lines.join('\n')}\n\nCabang: *${branch?.name || cart.branch_id}*\n*Total: Rp ${total.toLocaleString('id-ID')}*\n\nSudah sesuai? Balas *YA* untuk konfirmasi atau *BATAL* untuk membatalkan.`,
+      text: `📋 *Ringkasan pesanan${nameStr}:*\n\n${lines.join('\n')}\n\nCabang: *${branch?.name || cart.branch_id}*\n*Total: Rp ${total.toLocaleString('id-ID')}*\n\nSudah sesuai? Balas *YA* untuk konfirmasi atau *BATAL* untuk membatalkan.`,
       totalAmount: total,
     };
   }
