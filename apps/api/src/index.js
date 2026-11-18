@@ -282,29 +282,22 @@ async function processMessage(conversationId, phone, chatId, message) {
       // Bukan YA/BATAL → anggap edit pesanan, lanjut ke AI
     }
 
-    // Buat cart baru jika belum ada atau pesan pertama terindikasi order
+    // Buat cart dulu sebelum panggil AI — agar retry setelah timeout punya konteks
     if (!cart) {
       if (hint === 'ORDER' || hint === null) {
         cart = cartManager.create(conversationId);
       } else {
-        // Pesan umum, tidak ada konteks order
         await send('Ada yang bisa kami bantu, Kak? Mau pesan atau ada keluhan? 😊');
         return;
       }
     }
 
-    // Kirim acknowledgement ringan agar pelanggan tahu bot sedang memproses
-    const isFirstMessage = !cart.customer_name && !cart.branch_id && cart.items.length === 0;
-    if (!isFirstMessage) {
-      // Tidak kirim ack jika ini pesan pertama — biarkan AI langsung balas
-    }
-
     const history = db.prepare(
-      'SELECT sender_type, content FROM whatsapp_messages WHERE conversation_id=? ORDER BY id DESC LIMIT 8'
+      'SELECT sender_type, content FROM whatsapp_messages WHERE conversation_id=? ORDER BY id DESC LIMIT 4'
     ).all(conversationId).reverse();
     if (history.at(-1)?.sender_type === 'CUSTOMER' && history.at(-1)?.content === message) history.pop();
 
-    const aiMenus = selectRelevantMenus(message, history, menus, 6);
+    const aiMenus = selectRelevantMenus(message, history, menus, 3);
     let aiResult;
     try {
       aiResult = await ai.processOrderMessage(message, { menus: aiMenus, branches, cart }, history);

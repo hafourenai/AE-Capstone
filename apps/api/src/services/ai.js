@@ -42,13 +42,13 @@ const STOP_WORDS = new Set([
   'porsi', 'paket', 'untuk', 'aja', 'saja', 'juga', 'buat', 'nya',
 ]);
 
-export function selectRelevantMenus(message, history = [], allMenus = [], maxItems = 6) {
+export function selectRelevantMenus(message, history = [], allMenus = [], maxItems = 4) {
   const available = (allMenus || []).filter(m => m.active && (m.stock === undefined || m.stock > 0));
   if (available.length <= maxItems) return available;
 
   const recentTexts = [
     message || '',
-    ...(history || []).slice(-3).map(h => h.content || ''),
+    ...(history || []).slice(-2).map(h => h.content || ''),
   ].join(' ').toLowerCase();
 
   const tokens = recentTexts
@@ -93,7 +93,6 @@ const aiResponseFormat = { type: 'json_object' };
 export function normalizeCartAIOutput(value) {
   const result = CartAIOutputSchema.safeParse(value);
   if (result.success) return result.data;
-  // Fallback: kembalikan intent unknown, abaikan actions rusak
   const intent = typeof value?.intent === 'string' ? value.intent.toUpperCase() : 'UNKNOWN';
   return {
     actions: [],
@@ -153,53 +152,33 @@ export class AIEngine {
 
   /**
    * Mode interaktif: AI menerima konteks cart + riwayat, mengembalikan actions + replyText.
-   * Model kecil (Qwen 1.5B) harus tetap bisa handle ini karena output JSON sangat terbatas.
+   * System prompt dibuat seringkas mungkin untuk Qwen 1.5B di Termux.
    */
   async processOrderMessage(customerMessage, { menus, branches, cart }, history = []) {
+    // Hanya kirim nama menu (tanpa harga/id) untuk hemat token
     const menuLines = menus.length
-      ? menus.map(m => `${m.id}|${m.name}|Rp${m.price.toLocaleString('id-ID')}`).join('\n')
+      ? menus.map(m => m.name).join(', ')
       : '(tidak ada)';
-    const branchLines = branches.map(b => `${b.id}|${b.name}`).join('; ');
+    // Hanya id cabang — lebih pendek
+    const branchLines = branches.map(b => b.id).join(', ');
 
-    // Konteks cart saat ini
-    const cartCtx = cart
-      ? [
-          cart.customer_name ? `Nama: ${cart.customer_name}` : '',
-          cart.branch_id ? `Cabang: ${cart.branch_id}` : '',
-          cart.items?.length
-            ? `Item saat ini: ${cart.items.map(i => `${i.menuId} x${i.quantity}`).join(', ')}`
-            : 'Keranjang: kosong',
-        ].filter(Boolean).join(' | ')
-      : 'Keranjang: baru';
+    // Konteks cart: hanya sebutkan yang belum terisi
+    const missingCtx = [];
+    if (!cart?.customer_name) missingCtx.push('nama');
+    if (!cart?.branch_id) missingCtx.push('cabang');
+    if (!cart?.items?.length) missingCtx.push('menu');
+    const cartCtx = missingCtx.length
+      ? `Belum ada: ${missingCtx.join(', ')}`
+      : 'Sudah lengkap';
 
-    const systemPrompt = `Kamu adalah CS WhatsApp Sambal Joelid. Tugasmu:
-1. Pahami pesan pelanggan dalam bahasa Indonesia sehari-hari.
-2. Ekstrak informasi pesanan (nama, cabang, menu, jumlah, catatan) dari percakapan.
-3. Kembalikan HANYA JSON berikut (tanpa teks lain):
-{"intent":"ORDER|COMPLAINT|HANDOFF|MENU|GENERAL_QUESTION|UNKNOWN","actions":[...],"replyText":"...","askFor":"name|branch|items|quantity|clarify|"}
-
-Aturan actions:
-- SET_NAME: {"type":"SET_NAME","value":"nama"}
-- SET_BRANCH: {"type":"SET_BRANCH","value":"id_cabang"}
-- ADD_ITEM: {"type":"ADD_ITEM","menuHint":"nama menu","quantity":N}
-- UPDATE_ITEM: {"type":"UPDATE_ITEM","menuHint":"nama menu","quantity":N}  (N=0 = hapus)
-- REMOVE_ITEM: {"type":"REMOVE_ITEM","menuHint":"nama menu"}
-- SET_NOTES: {"type":"SET_NOTES","value":"catatan"}
-- RESET_ITEMS: {"type":"RESET_ITEMS"}
-
-Menu tersedia:
-${menuLines}
-
+    // Prompt sangat ringkas — prioritas utama untuk model kecil
+    const systemPrompt = `Ekstrak pesanan dari pesan pelanggan. Balas JSON saja tanpa teks lain.
+Format: {"intent":"ORDER","actions":[...],"replyText":"...","askFor":""}
+Actions: SET_NAME {"type":"SET_NAME","value":"nama"} | SET_BRANCH {"type":"SET_BRANCH","value":"id"} | ADD_ITEM {"type":"ADD_ITEM","menuHint":"nama","quantity":N} | REMOVE_ITEM {"type":"REMOVE_ITEM","menuHint":"nama"}
+Menu: ${menuLines}
 Cabang: ${branchLines}
-Konteks cart: ${cartCtx}
-
-Aturan penting:
-- Jika pelanggan belum sebut jumlah, set askFor="quantity" dan tanyakan.
-- Jika menu tidak jelas, set askFor="clarify" dan tanyakan menu yang dimaksud.
-- Gunakan id cabang (kolom pertama) untuk SET_BRANCH.
-- replyText harus ramah, singkat, bahasa Indonesia, pakai sapaan "Kak".
-- Jangan hitung total harga di replyText.
-- Jika intent COMPLAINT/HANDOFF/MENU/GENERAL_QUESTION, kosongkan actions.`;
+Cart: ${cartCtx}
+Jika bukan pesanan: intent=UNKNOWN, actions=[]. replyText singkat bahasa Indonesia.`;
 
     return this.processWithQueue(async () => {
       const startedAt = Date.now();
@@ -207,9 +186,10 @@ Aturan penting:
       const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
       try {
-        const historyItems = history.slice(-4).map(item => {
+        // Hanya 2 pesan history terakhir, max 100 char per pesan
+        const historyItems = history.slice(-2).map(item => {
           let content = (item.content || '').trim();
-          if (content.length > 150) content = content.slice(0, 130) + '...';
+          if (content.length > 100) content = content.slice(0, 90) + '...';
           return { role: item.sender_type === 'CUSTOMER' ? 'user' : 'assistant', content };
         });
 
@@ -220,8 +200,8 @@ Aturan penting:
             ...historyItems,
             { role: 'user', content: customerMessage },
           ],
-          temperature: 0.15,
-          max_tokens: 220,
+          temperature: 0.1,
+          max_tokens: 120,
           response_format: aiResponseFormat,
         });
 
