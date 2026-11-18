@@ -153,7 +153,11 @@ export class CartManager {
       "SELECT * FROM whatsapp_cart WHERE conversation_id = ? AND step != 'DONE'"
     ).get(conversationId);
     if (!row) return null;
-    return { ...row, items: JSON.parse(row.items_json || '[]') };
+    const cart = { ...row, items: JSON.parse(row.items_json || '[]') };
+    if (cart.customer_name && INVALID_NAMES.has(cart.customer_name.trim().toLowerCase())) {
+      cart.customer_name = null;
+    }
+    return cart;
   }
 
   /** Buat cart baru atau reset cart lama */

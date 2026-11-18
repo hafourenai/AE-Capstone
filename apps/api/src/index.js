@@ -293,35 +293,39 @@ async function processMessage(conversationId, phone, chatId, message) {
       }
     }
 
-    // ── Shortcut: parse branch dari teks langsung (tanpa AI) ──
-    // Tangani kasus pelanggan hanya reply nama cabang ("barat", "cabang barat")
-    if (!cart.branch_id && cart.items.length > 0) {
+    // ── Shortcut: parse branch & nama dari teks langsung (tanpa AI) ──
+    const missingNow = cartManager.missingFields(cart);
+
+    // Tangani jika pelanggan sedang ditanya cabang
+    if (missingNow.includes('branch') && cart.items.length > 0) {
       const directBranch = parseBranchFromText(message, branches);
       if (directBranch) {
         cart.branch_id = directBranch.id;
         cartManager.save(cart);
         cart = cartManager.get(conversationId);
-        const missing = cartManager.missingFields(cart);
-        if (missing.length === 0) {
+        const nextMissing = cartManager.missingFields(cart);
+        if (nextMissing.length === 0) {
           cart.step = 'CONFIRMING';
           cartManager.save(cart);
           const { text: summary } = cartManager.buildSummary(cart, menus, branches);
           await send(summary);
-        } else if (missing.includes('name')) {
-          await send('Boleh tahu nama Kakak untuk pesanannya? 😊');
+          return;
         }
-        return;
+        if (nextMissing.includes('name')) {
+          await send('Boleh tahu nama Kakak untuk pesanannya? 😊');
+          return;
+        }
       }
     }
 
-    // ── Shortcut: parse nama dari teks langsung (tanpa AI) ──
-    if (!cart.customer_name && cart.items.length > 0) {
+    // Tangani jika pelanggan sedang ditanya nama
+    if (missingNow.includes('name') && cart.items.length > 0) {
       let directName = parseNameFromText(message);
       // Jika pesan 1-3 kata dan hanya berisi huruf (misal: "Aldi", "Budi Santoso")
       if (!directName && /^[a-zA-Z\s]{2,30}$/.test(message.trim())) {
         const cleaned = message.trim();
         const lower = cleaned.toLowerCase();
-        const nonNames = ['ya', 'tidak', 'batal', 'ok', 'oke', 'pesan', 'order', 'menu', 'admin', 'pusat', 'barat', 'timur', 'utara', 'selatan', 'tengah'];
+        const nonNames = ['ya', 'tidak', 'batal', 'ok', 'oke', 'pesan', 'order', 'menu', 'admin', 'pusat', 'barat', 'timur', 'utara', 'selatan', 'tengah', 'nama'];
         if (!nonNames.includes(lower) && !branches.some(b => b.name.toLowerCase().includes(lower) || b.id.toLowerCase() === lower)) {
           directName = cleaned;
         }
@@ -331,8 +335,8 @@ async function processMessage(conversationId, phone, chatId, message) {
         cart.customer_name = directName;
         cartManager.save(cart);
         cart = cartManager.get(conversationId);
-        const missing = cartManager.missingFields(cart);
-        if (missing.length === 0) {
+        const nextMissing = cartManager.missingFields(cart);
+        if (nextMissing.length === 0) {
           cart.step = 'CONFIRMING';
           cartManager.save(cart);
           const { text: summary } = cartManager.buildSummary(cart, menus, branches);
@@ -340,7 +344,7 @@ async function processMessage(conversationId, phone, chatId, message) {
           return;
         }
         // Nama sudah tersimpan, lanjut cek field berikutnya (branch)
-        if (missing.includes('branch')) {
+        if (nextMissing.includes('branch')) {
           const branchList = branches.map(b => `• *${b.name}*`).join('\n');
           await send(`Siap Kak ${directName}! Mau dipesan dari cabang mana?\n\n${branchList}`);
           return;

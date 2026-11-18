@@ -173,12 +173,14 @@ export class AIEngine {
 
     // Prompt sangat ringkas — prioritas utama untuk model kecil
     const systemPrompt = `Ekstrak pesanan dari pesan pelanggan. Balas JSON saja tanpa teks lain.
-Format: {"intent":"ORDER","actions":[...],"replyText":"...","askFor":""}
-Actions: SET_NAME {"type":"SET_NAME","value":"nama"} | SET_BRANCH {"type":"SET_BRANCH","value":"id"} | ADD_ITEM {"type":"ADD_ITEM","menuHint":"nama","quantity":N} | REMOVE_ITEM {"type":"REMOVE_ITEM","menuHint":"nama"}
+Format: {"intent":"ORDER","actions":[...],"replyText":"","askFor":""}
+Actions: SET_NAME {"type":"SET_NAME","value":"Budi"} | SET_BRANCH {"type":"SET_BRANCH","value":"pusat"} | ADD_ITEM {"type":"ADD_ITEM","menuHint":"nama menu","quantity":N} | REMOVE_ITEM {"type":"REMOVE_ITEM","menuHint":"nama menu"}
 Menu: ${menuLines}
 Cabang: ${branchLines}
 Cart: ${cartCtx}
-Jika bukan pesanan: intent=UNKNOWN, actions=[]. replyText singkat bahasa Indonesia.`;
+Aturan penting:
+- JANGAN sertakan SET_NAME jika pelanggan belum menyebut nama orang asli. Jangan gunakan kata "nama" atau "kakak".
+- Jika bukan pesanan: intent=UNKNOWN, actions=[].`;
 
     return this.processWithQueue(async () => {
       const startedAt = Date.now();
