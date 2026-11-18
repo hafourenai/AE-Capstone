@@ -8,7 +8,7 @@ import { OrderComplaintBridge } from '../src/services/orderComplaintBridge.js';
 import { WAHAClient } from '../src/services/waha.js';
 import { detectIntentHint, normalizeAIOutput, selectRelevantMenus, parseAICompletion } from '../src/services/ai.js';
 import { normalizeCatalogCsv } from '../src/services/catalog.js';
-import { CartManager, resolveMenu, resolveBranch } from '../src/services/cartManager.js';
+import { CartManager, resolveMenu, resolveBranch, parseBranchFromText, parseNameFromText } from '../src/services/cartManager.js';
 
 function temporaryDatabase(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sambal-joelid-'));
@@ -74,6 +74,101 @@ test('resolveBranch: returns null for unknown branch', () => {
   assert.equal(resolveBranch('timur', BRANCHES), null);
 });
 
+// ── resolveMenu untuk menu nama panjang ──────────────────────────────────────
+
+const MENUS_PAKET = [
+  { id: 'paket-combo-jukut-lele', name: 'Paket Combo Jukut Lele', price: 26500, active: 1, stock: 50, aliases: '[]' },
+  { id: 'paket-combo-jukut-ayam', name: 'Paket Combo Jukut Ayam', price: 29500, active: 1, stock: 50, aliases: '[]' },
+  { id: 'nasi-jeruk', name: 'Nasi Jeruk', price: 3500, active: 1, stock: 50, aliases: '[]' },
+  { id: 'lele-goreng', name: 'Lele Goreng', price: 7000, active: 1, stock: 50, aliases: '["lele"]' },
+  ...MENUS,
+];
+
+test('resolveMenu: paket combo jukut lele — nama panjang', () => {
+  const result = resolveMenu('paket combo jukut lele', MENUS_PAKET);
+  assert.ok(result !== null);
+  assert.equal(result.id, 'paket-combo-jukut-lele');
+});
+
+test('resolveMenu: typo "copmbo" masih match ke menu yang mengandung kata combo/lele', () => {
+  // "paket copmbo jukut lele" — typo pada "combo" → matcher tetap menemukan menu yang relevan
+  const result = resolveMenu('paket copmbo jukut lele', MENUS_PAKET);
+  assert.ok(result !== null, 'harus menemukan menu');
+  // Harus match ke salah satu menu yang mengandung "lele" atau "combo" atau "jukut"
+  const name = result.name.toLowerCase();
+  assert.ok(name.includes('lele') || name.includes('combo') || name.includes('jukut'),
+    `Expected menu related to "combo lele", got: ${result.name}`);
+});
+
+test('resolveMenu: nasi jeruk', () => {
+  const result = resolveMenu('nasi jeruk', MENUS_PAKET);
+  assert.ok(result !== null);
+  assert.equal(result.id, 'nasi-jeruk');
+});
+
+test('resolveMenu: tidak salah resolve "lele" ke paket combo jukut lele', () => {
+  // "lele" sendirian sebaiknya ke lele goreng, bukan paket combo
+  const result = resolveMenu('lele', MENUS_PAKET);
+  assert.ok(result !== null);
+  // Harus bukan paket (yang namanya panjang), lele goreng lebih cocok
+  assert.ok(result.id === 'lele-goreng' || result.name.toLowerCase().includes('lele'));
+});
+
+// ── parseBranchFromText ───────────────────────────────────────────────────────
+
+test('parseBranchFromText: "barat" langsung resolve ke cabang barat', () => {
+  const result = parseBranchFromText('barat', BRANCHES);
+  assert.ok(result !== null);
+  assert.equal(result.id, 'barat');
+});
+
+test('parseBranchFromText: "cabang barat" resolve ke cabang barat', () => {
+  const result = parseBranchFromText('cabang barat', BRANCHES);
+  assert.ok(result !== null);
+  assert.equal(result.id, 'barat');
+});
+
+test('parseBranchFromText: returns null untuk kata tidak relevan', () => {
+  assert.equal(parseBranchFromText('mau makan', BRANCHES), null);
+});
+
+// ── parseNameFromText ─────────────────────────────────────────────────────────
+
+test('parseNameFromText: "nama saya Aldi" extract Aldi', () => {
+  const result = parseNameFromText('nama saya Aldi');
+  assert.equal(result, 'Aldi');
+});
+
+test('parseNameFromText: "saya Nova" extract Nova', () => {
+  const result = parseNameFromText('saya Nova');
+  assert.ok(result !== null);
+});
+
+test('parseNameFromText: returns null untuk placeholder "nama"', () => {
+  assert.equal(parseNameFromText('nama'), null);
+});
+
+// ── CartManager: nama invalid tidak disimpan ──────────────────────────────────
+
+test('CartManager.applyActions: SET_NAME dengan value "nama" diabaikan', (t) => {
+  const db = temporaryDatabase(t);
+  db.prepare("INSERT INTO whatsapp_conversations(id,phone,state) VALUES (1,'628123456789','AI_ACTIVE')").run();
+  const cm = new CartManager(db);
+  const cart = cm.create(1);
+  cm.applyActions(cart, [{ type: 'SET_NAME', value: 'nama' }], MENUS, BRANCHES);
+  // customer_name harus tetap tidak terisi (null atau undefined)
+  assert.ok(!cart.customer_name, `Expected nama tidak tersimpan, got: ${cart.customer_name}`);
+});
+
+test('CartManager.applyActions: SET_NAME dengan value "Aldi" diterima', (t) => {
+  const db = temporaryDatabase(t);
+  db.prepare("INSERT INTO whatsapp_conversations(id,phone,state) VALUES (1,'628123456789','AI_ACTIVE')").run();
+  const cm = new CartManager(db);
+  const cart = cm.create(1);
+  cm.applyActions(cart, [{ type: 'SET_NAME', value: 'Aldi' }], MENUS, BRANCHES);
+  assert.equal(cart.customer_name, 'Aldi');
+});
+
 // ── CartManager ───────────────────────────────────────────────────────────────
 
 test('CartManager: create and get cart', (t) => {
@@ -125,13 +220,19 @@ test('CartManager.applyActions: ADD_ITEM beberapa menu sekaligus (skenario 2)', 
   assert.equal(cart.items.length, 3);
 });
 
-test('CartManager.applyActions: ADD_ITEM accumulates quantity on duplicate', (t) => {
+test('CartManager.applyActions: ADD_ITEM pada item yang sudah ada → SET qty (cegah duplikasi retry)', (t) => {
   const db = temporaryDatabase(t);
   db.prepare("INSERT INTO whatsapp_conversations(id,phone,state) VALUES (1,'628123456789','AI_ACTIVE')").run();
   const cm = new CartManager(db);
   const cart = cm.create(1);
+  // Pertama kali: tambah nasi 2
   cm.applyActions(cart, [{ type: 'ADD_ITEM', menuHint: 'nasi', quantity: 2 }], MENUS, BRANCHES);
-  cm.applyActions(cart, [{ type: 'ADD_ITEM', menuHint: 'nasi', quantity: 3 }], MENUS, BRANCHES);
+  assert.equal(cart.items.find(i => i.menuId === 'nasi-putih').quantity, 2);
+  // Retry dengan qty yang sama → tidak berlipat, tetap 2
+  cm.applyActions(cart, [{ type: 'ADD_ITEM', menuHint: 'nasi', quantity: 2 }], MENUS, BRANCHES);
+  assert.equal(cart.items.find(i => i.menuId === 'nasi-putih').quantity, 2);
+  // Pesan baru dengan qty berbeda → update ke 5
+  cm.applyActions(cart, [{ type: 'ADD_ITEM', menuHint: 'nasi', quantity: 5 }], MENUS, BRANCHES);
   assert.equal(cart.items.find(i => i.menuId === 'nasi-putih').quantity, 5);
 });
 

@@ -13,7 +13,7 @@ import { WAHAClient } from './services/waha.js';
 import { AIEngine, detectIntentHint, selectRelevantMenus } from './services/ai.js';
 import { OrderComplaintBridge } from './services/orderComplaintBridge.js';
 import { CatalogService } from './services/catalog.js';
-import { CartManager } from './services/cartManager.js';
+import { CartManager, resolveBranch, parseBranchFromText, parseNameFromText } from './services/cartManager.js';
 
 const env = {
   port: Number(process.env.PORT || 3001), dbPath: process.env.CUSTOMER_MODULE_DB_PATH || './data/customer-module.sqlite',
@@ -282,7 +282,9 @@ async function processMessage(conversationId, phone, chatId, message) {
       // Bukan YA/BATAL → anggap edit pesanan, lanjut ke AI
     }
 
-    // Buat cart dulu sebelum panggil AI — agar retry setelah timeout punya konteks
+    // ── Cart: buat baru jika belum ada ──
+    // Reset otomatis jika cart lama DONE dan pesan terindikasi order baru
+    let cart = cartManager.get(conversationId);
     if (!cart) {
       if (hint === 'ORDER' || hint === null) {
         cart = cartManager.create(conversationId);
@@ -292,12 +294,51 @@ async function processMessage(conversationId, phone, chatId, message) {
       }
     }
 
+    // ── Shortcut: parse branch dari teks langsung (tanpa AI) ──
+    // Tangani kasus pelanggan hanya reply nama cabang ("barat", "cabang barat")
+    if (!cart.branch_id && cart.items.length > 0) {
+      const directBranch = parseBranchFromText(message, branches);
+      if (directBranch) {
+        cart.branch_id = directBranch.id;
+        cartManager.save(cart);
+        cart = cartManager.get(conversationId);
+        const missing = cartManager.missingFields(cart);
+        if (missing.length === 0) {
+          cart.step = 'CONFIRMING';
+          cartManager.save(cart);
+          const { text: summary } = cartManager.buildSummary(cart, menus, branches);
+          await send(summary);
+        } else if (missing.includes('name')) {
+          await send('Boleh tahu nama Kakak untuk pesanannya? 😊');
+        }
+        return;
+      }
+    }
+
+    // ── Shortcut: parse nama dari teks langsung (tanpa AI) ──
+    if (!cart.customer_name && cart.items.length > 0 && !cart.branch_id === false) {
+      const directName = parseNameFromText(message);
+      if (directName) {
+        cart.customer_name = directName;
+        cartManager.save(cart);
+        cart = cartManager.get(conversationId);
+        const missing = cartManager.missingFields(cart);
+        if (missing.length === 0) {
+          cart.step = 'CONFIRMING';
+          cartManager.save(cart);
+          const { text: summary } = cartManager.buildSummary(cart, menus, branches);
+          await send(summary);
+          return;
+        }
+      }
+    }
+
     const history = db.prepare(
       'SELECT sender_type, content FROM whatsapp_messages WHERE conversation_id=? ORDER BY id DESC LIMIT 4'
     ).all(conversationId).reverse();
     if (history.at(-1)?.sender_type === 'CUSTOMER' && history.at(-1)?.content === message) history.pop();
 
-    const aiMenus = selectRelevantMenus(message, history, menus, 3);
+    const aiMenus = selectRelevantMenus(message, history, menus, 4);
     let aiResult;
     try {
       aiResult = await ai.processOrderMessage(message, { menus: aiMenus, branches, cart }, history);
@@ -309,7 +350,6 @@ async function processMessage(conversationId, phone, chatId, message) {
       throw e;
     }
 
-    // Jika bukan intent order (complaint/handoff/dll dari dalam konteks order)
     if (aiResult.intent === 'HANDOFF') {
       db.prepare('UPDATE whatsapp_conversations SET state=?, paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run('WAITING_ADMIN', pauseUntil(), conversationId);
       await send('👋 Mohon tunggu, kami sedang menghubungkan Anda dengan tim admin kami...');
