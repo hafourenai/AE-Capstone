@@ -332,41 +332,27 @@ async function processMessage(conversationId, phone, chatId, message) {
     // Reload cart dari DB (pastikan data terbaru)
     cart = cartManager.get(conversationId);
 
+    // Menu tidak dikenali → tunjukkan daftar
+    const notFound = warnings.filter(w => w.includes('tidak tersedia'));
+    if (notFound.length > 0) {
+      await send(`Mohon maaf kak, beberapa menu tidak kami temukan:\n${notFound.map(w => `• ${w}`).join('\n')}\n\nKetik *menu* untuk melihat daftar menu ya! 😊`);
+      return;
+    }
+
+    // Backend yang tanya field yang kurang — JANGAN pakai replyText dari AI
+    // Urutan: items dulu → branch → nama terakhir
     const missing = cartManager.missingFields(cart);
-
-    // Jika ada warnings menu tidak ditemukan
-    if (warnings.length > 0 && aiResult.actions?.some(a => a.type === 'ADD_ITEM' || a.type === 'UPDATE_ITEM')) {
-      const notFound = warnings.filter(w => w.includes('tidak tersedia'));
-      if (notFound.length > 0) {
-        await send(`Mohon maaf kak, beberapa menu tidak ditemukan:\n${notFound.map(w => `• ${w}`).join('\n')}\n\nKetik *menu* untuk melihat daftar menu yang tersedia ya! 😊`);
-        return;
-      }
-    }
-
-    // Jika AI meminta klarifikasi khusus
-    if (aiResult.askFor === 'quantity') {
-      await send(aiResult.replyText || 'Berapa jumlah yang ingin dipesan, Kak? 😊');
+    if (missing.includes('items')) {
+      await send('Mau pesan menu apa hari ini, Kak? Sebutkan nama menu dan jumlahnya ya! 😊');
       return;
     }
-    if (aiResult.askFor === 'clarify') {
-      await send(aiResult.replyText || 'Maaf kak, bisa disebutkan nama menu yang dimaksud? 😊');
+    if (missing.includes('branch')) {
+      const branchList = branches.map(b => `• *${b.name}*`).join('\n');
+      await send(`Siap Kak! Mau dipesan dari cabang mana?\n\n${branchList}`);
       return;
     }
-
-    // Cek missing fields dan tanya satu per satu
-    if (missing.length > 0) {
-      let reply = aiResult.replyText;
-      if (!reply || reply.trim() === '') {
-        if (missing.includes('items')) {
-          reply = 'Mau pesan menu apa hari ini, Kak? Langsung sebut saja nama dan jumlahnya ya! 😊';
-        } else if (missing.includes('name')) {
-          reply = 'Boleh tahu nama Kakak siapa? 😊';
-        } else if (missing.includes('branch')) {
-          const branchList = branches.map(b => `• *${b.name}*`).join('\n');
-          reply = `Mau dipesan dari cabang mana, Kak?\n\n${branchList}`;
-        }
-      }
-      await send(reply);
+    if (missing.includes('name')) {
+      await send('Boleh tahu nama Kakak untuk pesanannya? 😊');
       return;
     }
 
