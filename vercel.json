@@ -2,5 +2,10 @@
   "installCommand": "npm ci --workspace @sambal-joelid/web --include-workspace-root=false",
   "buildCommand": "npm --workspace @sambal-joelid/web run build",
   "outputDirectory": "apps/web/dist",
-  "rewrites": [{ "source": "/admin", "destination": "/index.html" }]
+  "rewrites": [{ "source": "/admin", "destination": "/index.html" }],
+  "headers": [
+    { "source": "/", "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }] },
+    { "source": "/admin", "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }] },
+    { "source": "/index.html", "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }] }
+  ]
 }

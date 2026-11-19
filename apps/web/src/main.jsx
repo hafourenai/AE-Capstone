@@ -22,7 +22,9 @@ const request = async (path, options = {}) => {
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.message || payload.error || `Permintaan gagal (${response.status})`);
+    const error = new Error(payload.message || payload.error || `Permintaan gagal (${response.status})`);
+    error.status = response.status;
+    throw error;
   }
   return response.status === 204 ? null : response.json();
 };
@@ -552,8 +554,7 @@ function CatalogSettings({ token, onError }) {
   );
 }
 
-function Admin() {
-  const [token, setToken] = useState(localStorage.token || '');
+function AdminSession({ token, onLogout }) {
   const [kind, setKind] = useState('dashboard');
   const [data, setData] = useState([]);
   const [overview, setOverview] = useState({ orders: [], complaints: [], whatsapp: [] });
@@ -591,11 +592,19 @@ function Admin() {
         .then(([orders, complaints, whatsapp]) => {
           if (sequence === loadSequence.current) setOverview({ orders: orders.data, complaints: complaints.data, whatsapp: whatsapp.data });
         })
-        .catch(e => { if (sequence === loadSequence.current) setError(e.message); })
+        .catch(e => {
+          if (sequence !== loadSequence.current) return;
+          if (e.status === 401) onLogout();
+          else setError(e.message);
+        })
         .finally(() => { if (sequence === loadSequence.current) setLoading(false); });
       request('/admin/integrations/health', { headers: { Authorization: `Bearer ${token}` } })
         .then(value => { if (sequence === loadSequence.current) setHealth(value); })
-        .catch(e => { if (sequence === loadSequence.current) setHealth({ waha: 'OFFLINE', message: e.message }); });
+        .catch(e => {
+          if (sequence !== loadSequence.current) return;
+          if (e.status === 401) onLogout();
+          else setHealth({ waha: 'OFFLINE', message: e.message });
+        });
       return;
     }
     const endpoint = kind === 'whatsapp' ? '/admin/whatsapp/conversations' : `/admin/${kind}`;
@@ -603,11 +612,11 @@ function Admin() {
       .then(x => { if (sequence === loadSequence.current) setData(x.data || x); })
       .catch(e => {
         if (sequence !== loadSequence.current) return;
-        setError(e.message);
-        if (e.message.includes('Autentikasi')) { localStorage.removeItem('token'); setToken(''); }
+        if (e.status === 401) onLogout();
+        else setError(e.message);
       })
       .finally(() => { if (sequence === loadSequence.current) setLoading(false); });
-  }, [token, kind]);
+  }, [token, kind, onLogout]);
 
   useEffect(() => {
     load();
@@ -643,32 +652,6 @@ function Admin() {
     setEndDate('');
     setSortOrder('ASC');
   };
-
-  if (!token) return (
-    <section className="login">
-      <img className="login-brand-art" src="/brand-top-right.jpg" alt="Maskot Sambal Joelid" />
-      <p className="eyebrow">RUANG OPERASIONAL</p>
-      <h2>Masuk sebagai Admin</h2>
-      {error && <p className="error">{error}</p>}
-      <form onSubmit={async e => {
-        e.preventDefault();
-        const f = new FormData(e.currentTarget);
-        try {
-          const { token: t } = await request('/auth/login', {
-            method: 'POST',
-            body: JSON.stringify({ email: f.get('email'), password: f.get('password') }),
-          });
-          localStorage.token = t;
-          setToken(t);
-          setError('');
-        } catch (x) { setError(x.message); }
-      }}>
-        <label>Email<input name="email" type="email" required autoComplete="email" /></label>
-        <label>Kata sandi<input name="password" type="password" required autoComplete="current-password" /></label>
-        <button>Masuk →</button>
-      </form>
-    </section>
-  );
 
   const statusOptions = kind === 'orders'
     ? ['NEW', 'CONFIRMED', 'PROCESSING', 'COMPLETED', 'CANCELLED']
@@ -786,7 +769,7 @@ function Admin() {
         </nav>
         <div className="sidebar-foot">
           <span className="online-dot" /> Sistem online
-          <button onClick={() => { localStorage.removeItem('token'); setToken(''); }}>Keluar →</button>
+          <button onClick={onLogout}>Keluar →</button>
         </div>
       </aside>
 
@@ -1061,6 +1044,71 @@ function Admin() {
           </div>
         )}
       </div>
+    </section>
+  );
+}
+
+function Admin() {
+  const [token, setToken] = useState(() => localStorage.getItem('token') || '');
+  const [error, setError] = useState('');
+  const [loggingIn, setLoggingIn] = useState(false);
+  const loginAttempt = useRef(0);
+
+  const logout = useCallback(() => {
+    loginAttempt.current += 1;
+    localStorage.removeItem('token');
+    setToken('');
+    setError('');
+    setLoggingIn(false);
+  }, []);
+
+  useEffect(() => {
+    const syncSession = (event) => {
+      if (event.key !== 'token' && event.key !== null) return;
+      loginAttempt.current += 1;
+      setToken(localStorage.getItem('token') || '');
+      setError('');
+      setLoggingIn(false);
+    };
+    window.addEventListener('storage', syncSession);
+    return () => window.removeEventListener('storage', syncSession);
+  }, []);
+
+  if (token) return <AdminSession key={token} token={token} onLogout={logout} />;
+
+  const login = async (event) => {
+    event.preventDefault();
+    if (loggingIn) return;
+    const attempt = ++loginAttempt.current;
+    const form = new FormData(event.currentTarget);
+    setLoggingIn(true);
+    setError('');
+    try {
+      const { token: nextToken } = await request('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email: form.get('email'), password: form.get('password') }),
+      });
+      if (attempt !== loginAttempt.current) return;
+      localStorage.setItem('token', nextToken);
+      setToken(nextToken);
+    } catch (loginError) {
+      if (attempt === loginAttempt.current) setError(loginError.message);
+    } finally {
+      if (attempt === loginAttempt.current) setLoggingIn(false);
+    }
+  };
+
+  return (
+    <section className="login">
+      <img className="login-brand-art" src="/brand-top-right.jpg" alt="Maskot Sambal Joelid" />
+      <p className="eyebrow">RUANG OPERASIONAL</p>
+      <h2>Masuk sebagai Admin</h2>
+      {error && <p className="error" role="alert">{error}</p>}
+      <form onSubmit={login}>
+        <label>Email<input name="email" type="email" required autoComplete="email" /></label>
+        <label>Kata sandi<input name="password" type="password" required autoComplete="current-password" /></label>
+        <button disabled={loggingIn}>{loggingIn ? 'Memproses…' : 'Masuk →'}</button>
+      </form>
     </section>
   );
 }
