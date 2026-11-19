@@ -28,6 +28,8 @@ export const SLANG = {
 /**
  * Normalisasi teks untuk pencocokan.
  * - NFKC, lowercase
+ * - pisahkan angka yang menempel dengan huruf ("lele3" -> "lele 3", "2es" -> "2 es")
+ * - ganti tanda koma (,) dan (+) dengan spasi koma penanda pemisah segmen
  * - ringkas pengulangan HANYA huruf (iyaaa -> iya), bukan angka (10000 tetap)
  * - buang tanda baca/emoji
  * - rapikan spasi dan terapkan kamus slang per kata
@@ -36,14 +38,18 @@ export function normalize(text) {
   return String(text ?? '')
     .normalize('NFKC')
     .toLowerCase()
+    .replace(/(\p{L})(\p{N})/gu, '$1 $2')
+    .replace(/(\p{N})(\p{L})/gu, '$1 $2')
     .replace(/(\p{L})\1{2,}/gu, '$1')
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/[^\p{L}\p{N}\s,]/gu, ' ')
+    .replace(/\s*,\s*/g, ' , ')
     .replace(/\s+/g, ' ')
     .trim()
     .split(' ')
     .filter(Boolean)
     .map((word) => SLANG[word] ?? word)
-    .join(' ');
+    .join(' ')
+    .replace(/\s*,\s*/g, ' , ');
 }
 
 /** Ambil angka dari teks yang sudah dinormalisasi. */

@@ -17,11 +17,11 @@ const QUANTITY_WORDS = new Set([
   'porsi', 'buah', 'biji', 'gelas', 'bungkus', 'kotak', 'pak', 'orang', 'x',
 ]);
 
-/** Pisahkan pesanan menjadi beberapa segmen: "gdg 2 dan teh 1". */
+/** Pisahkan pesanan menjadi beberapa segmen: "gdg 2 dan teh 1", "lele 3, nasi jeruk 10". */
 export function splitSegments(norm) {
   return String(norm ?? '')
-    .split(/\s+(?:dan|sama)\s+|\s*\+\s*/)
-    .map((segment) => segment.trim())
+    .split(/\s*(?:dan|sama|sm|\+|\/|\band\b|,)\s*/)
+    .map((segment) => segment.trim().replace(/^,|,$/g, '').trim())
     .filter(Boolean);
 }
 

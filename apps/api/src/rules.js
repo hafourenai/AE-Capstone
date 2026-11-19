@@ -3,6 +3,20 @@ import { isBareNumber } from './normalize.js';
 // ── Daftar perintah baku (Lapisan 1) ─────────────────────────────────────────
 // Semua nilai sudah dalam bentuk `norm` (lihat normalize.js).
 
+export const SAPAAN = new Set([
+  'halo', 'hai', 'hi', 'hei', 'woi', 'p', 'tes', 'test',
+  'pagi', 'selamat pagi', 'siang', 'selamat siang', 'sore', 'selamat sore', 'malam', 'selamat malam',
+  'assalamualaikum', 'assalamu alaikum', 'ass', 'asslm', 'halo kak', 'hai kak', 'halo min', 'hai min',
+  'permisi', 'mau tanya',
+]);
+
+export const MAU_PESAN = new Set([
+  'mau pesan', 'mau pesen', 'saya mau pesan', 'saya mau pesen', 'pengen pesan', 'pengen pesen',
+  'ingin pesan', 'mau order', 'order dong', 'pesan dong', 'pesen dong', 'bisa pesan', 'bisa pesen',
+  'mau beli', 'beli dong', 'sy mau pesan', 'sy mau pesen', 'sy mau pesan dong', 'sy mau pesen dong',
+  'saya mau pesan dong', 'saya mau pesen dong',
+]);
+
 export const SETUJU = new Set([
   'ya', 'iya', 'y', 'ok', 'oke', 'siap', 'betul', 'benar', 'setuju',
   'lanjut', 'gas', 'boleh', 'yup', 'yep', 'fix', 'deal', 'sudah benar', 'sudah betul',
@@ -58,6 +72,8 @@ export function matchRule(norm) {
   if (JAM.some((phrase) => hasPhrase(norm, phrase))) return { type: 'jam' };
   if (LOKASI.some((phrase) => hasPhrase(norm, phrase))) return { type: 'lokasi' };
   if (SETUJU.has(norm)) return { type: 'setuju' };
+  if (SAPAAN.has(norm)) return { type: 'sapaan' };
+  if (MAU_PESAN.has(norm)) return { type: 'mau_pesan' };
   const words = norm.split(' ').filter(Boolean);
   if (words.length && words.every((word) => SETUJU.has(word))) return { type: 'setuju' };
   return null;

@@ -46,6 +46,8 @@ export class BotHandler {
     if (rule?.type === 'menu') return this.menu(session, menus);
     if (rule?.type === 'jam') return this.jam(session, settings);
     if (rule?.type === 'lokasi') return this.lokasi(session, settings);
+    if (rule?.type === 'sapaan') return this.sapaan(session);
+    if (rule?.type === 'mau_pesan') return this.tanyaMenu(session);
 
     if (session.botState === 'KONFIRMASI' && rule?.type === 'setuju') {
       return this.confirm(session, phone, menus);
@@ -131,6 +133,19 @@ export class BotHandler {
     session.failCount = 0;
     this.save(session);
     return this.out(this.templates.render('menu', { daftar }), 'rules', 'tanya_menu');
+  }
+
+  sapaan(session) {
+    session.failCount = 0;
+    this.save(session);
+    return this.out(this.templates.render('sapaan'), 'rules', 'sapaan');
+  }
+
+  tanyaMenu(session) {
+    session.botState = 'PILIH_MENU';
+    session.failCount = 0;
+    this.save(session);
+    return this.out(this.templates.render('tanya_menu'), 'rules', 'pesan');
   }
 
   jam(session, settings) {
