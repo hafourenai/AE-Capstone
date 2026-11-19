@@ -273,7 +273,7 @@ export class BotHandler {
       if (!menu) continue;
       const subtotal = menu.price * item.qty;
       total += subtotal;
-      lines.push(`${item.qty}x ${menu.name} (${formatRupiah(subtotal)})`);
+      lines.push(`• ${item.qty}x ${menu.name} — ${formatRupiah(subtotal)}`);
     }
 
     if (!lines.length) {
@@ -289,7 +289,8 @@ export class BotHandler {
     this.save(session);
     return this.out(this.templates.render('konfirmasi', {
       nama: draft.customerName,
-      ringkasan: lines.join(', '),
+      ringkasan: lines.join('\n'),
+      cabang: branches.find((branch) => branch.id === draft.branchId)?.name || draft.branchId,
       total: formatRupiah(total),
     }), 'rules', 'pesan');
   }
@@ -384,7 +385,8 @@ export class BotHandler {
       this.state.reset(session.conversationId);
       return this.out(this.templates.render('sukses', {
         referensi: order.reference,
-        total: formatRupiah(order.totalAmount),
+        total: formatRupiah(order.totalAmount).replace(/^Rp/, 'Rp '),
+        nama: draft.customerName,
       }), 'rules', 'pesan', { order });
     } catch (error) {
       this.logger.error?.(`[bot] Gagal simpan pesanan: ${error.message}`);

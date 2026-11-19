@@ -82,6 +82,33 @@ test('bot: alur pesan -> cabang -> nama -> konfirmasi -> order tersimpan', async
   assert.equal(state.get(conversationId).botState, 'IDLE');
 });
 
+test('bot: ringkasan multi-item berupa daftar dan konfirmasi menyebut nama pelanggan', async (t) => {
+  const { bot, conversationId } = setup(t);
+  await bot.handle({ conversationId, phone: '628111', raw: 'gdg 2 dan es teh 3' });
+  await bot.handle({ conversationId, phone: '628111', raw: 'pusat' });
+  const summary = await bot.handle({ conversationId, phone: '628111', raw: 'Nova' });
+  assert.match(summary.reply, /• 2x Nasi Gudeg — Rp30\.000\n• 3x Es Teh Manis — Rp15\.000/);
+  assert.match(summary.reply, /Cabang: Cabang Pusat\n\*Total: Rp45\.000\*/);
+
+  const success = await bot.handle({ conversationId, phone: '628111', raw: 'ya' });
+  assert.match(success.reply, /✅ Yeay! Pesanan Anda berhasil dicatat! 🎉/);
+  assert.match(success.reply, /Nomor Pesanan: ORD-[\w-]+\nTotal: Rp 45\.000/);
+  assert.match(success.reply, /Terima kasih sudah memesan di Sambal Joelid, Kak Nova! ❤️/);
+});
+
+test('template bawaan lama diperbarui, tetapi edit admin tidak ditimpa saat startup', (t) => {
+  const { db, templates } = setup(t);
+  db.prepare('UPDATE message_templates SET content = ? WHERE key = ?').run('Balasan khusus admin: {referensi}', 'sukses');
+  new TemplateStore(db);
+  assert.equal(templates.get('sukses'), 'Balasan khusus admin: {referensi}');
+
+  db.prepare('UPDATE message_templates SET content = ? WHERE key = ?').run(
+    'Pesanan Bapak/Ibu sudah dicatat. Nomor pesanan: {referensi}. Total {total}. Terima kasih.', 'sukses',
+  );
+  new TemplateStore(db);
+  assert.match(templates.get('sukses'), /Kak \{nama\}! ❤️/);
+});
+
 test('bot: fuzzy ambigu meminta pilihan, bukan menebak', async (t) => {
   const { db, bot, conversationId } = setup(t, { menus: AMBIGUOUS_MENUS });
   const result = await bot.handle({ conversationId, phone: '628111', raw: 'es' });

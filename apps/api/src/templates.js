@@ -27,7 +27,7 @@ export const DEFAULT_TEMPLATES = {
   jam_belum_diatur: 'Mohon maaf Kak, jam buka belum tersedia. Saya sambungkan ke staf kami ya.',
   tanya_lokasi: 'Alamat kami: {alamat}.',
   alamat_belum_diatur: 'Mohon maaf Kak, alamat belum tersedia. Saya sambungkan ke staf kami ya.',
-  konfirmasi: '📋 Ringkasan pesanan untuk *{nama}:*\n\n{ringkasan}\n\n*Total: {total}*\n\nSudah sesuai? Balas *YA* untuk konfirmasi atau *BATAL* untuk membatalkan.',
+  konfirmasi: '📋 Ringkasan pesanan untuk *{nama}:*\n\n{ringkasan}\n\nCabang: {cabang}\n*Total: {total}*\n\nSudah sesuai? Balas *YA* untuk konfirmasi atau *BATAL* untuk membatalkan.',
   klarifikasi_menu: 'Mohon maaf Kak, maksudnya *{opsi1}* atau *{opsi2}*?',
   tidak_paham: 'Mohon maaf Kak, saya kurang paham. Boleh ditulis ulang pesanannya? 😊',
   tanya_menu: 'Mau pesan apa hari ini, Kak? 😊',
@@ -38,12 +38,21 @@ export const DEFAULT_TEMPLATES = {
   handoff: 'Baik Bapak/Ibu, saya sambungkan ke staf kami ya. Mohon ditunggu sebentar.',
   timeout: 'Mohon tunggu sebentar Bapak/Ibu, kami bantu langsung.',
   media: 'Mohon maaf Bapak/Ibu, untuk pesan gambar atau dokumen saya sambungkan ke staf kami ya. Mohon ditunggu sebentar.',
-  sukses: 'Pesanan Bapak/Ibu sudah dicatat. Nomor pesanan: {referensi}. Total {total}. Terima kasih.',
+  sukses: '✅ Yeay! Pesanan Anda berhasil dicatat! 🎉\n\nNomor Pesanan: {referensi}\nTotal: {total}\n\nTerima kasih sudah memesan di Sambal Joelid, Kak {nama}! ❤️',
   gagal_simpan: 'Mohon maaf Bapak/Ibu, pesanan belum bisa disimpan. Saya sambungkan ke staf kami ya.',
   stok_habis: 'Mohon maaf Bapak/Ibu, ada menu yang stoknya habis. Silakan pilih menu lain ya.',
   keluhan_konfirmasi: 'Kami catat keluhan Bapak/Ibu: "{keluhan}". Balas YA untuk mengirim atau BATAL untuk membatalkan.',
   keluhan_sukses: 'Keluhan Bapak/Ibu sudah kami terima. Nomor referensi: {referensi}. Terima kasih.',
   rate_limit: 'Mohon maaf Kak, pesan Anda sedang kami proses. Mohon ditunggu sebentar ya.',
+};
+
+// Perbarui hanya template bawaan versi sebelumnya; template yang diedit admin tetap dipertahankan.
+const PREVIOUS_TEMPLATES = {
+  konfirmasi: [
+    '📋 Ringkasan pesanan untuk *{nama}:*\n\n{ringkasan}\n\n*Total: {total}*\n\nSudah sesuai? Balas *YA* untuk konfirmasi atau *BATAL* untuk membatalkan.',
+    'Pesanan {nama}: {ringkasan}. Total {total}. Sudah benar? Balas YA, atau BATAL jika ingin mengubah.',
+  ],
+  sukses: ['Pesanan Bapak/Ibu sudah dicatat. Nomor pesanan: {referensi}. Total {total}. Terima kasih.'],
 };
 
 export class TemplateStore {
@@ -53,9 +62,13 @@ export class TemplateStore {
   }
 
   seed() {
-    const insert = this.db.prepare('INSERT OR REPLACE INTO message_templates(key, content) VALUES (?, ?)');
+    const update = this.db.prepare('UPDATE message_templates SET content = ? WHERE key = ? AND content = ?');
+    const insert = this.db.prepare('INSERT OR IGNORE INTO message_templates(key, content) VALUES (?, ?)');
     this.db.transaction(() => {
-      for (const [key, content] of Object.entries(DEFAULT_TEMPLATES)) insert.run(key, content);
+      for (const [key, content] of Object.entries(DEFAULT_TEMPLATES)) {
+        for (const previous of PREVIOUS_TEMPLATES[key] || []) update.run(content, key, previous);
+        insert.run(key, content);
+      }
     })();
   }
 
