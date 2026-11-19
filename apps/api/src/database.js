@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
+import { normalize } from './normalize.js';
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(path.resolve(filename)), { recursive: true });
@@ -72,9 +73,40 @@ export function openDatabase(filename) {
       payload_json TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','CONFIRMED','CANCELLED','EXPIRED')),
       expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS wa_processed_messages (
+      message_id TEXT PRIMARY KEY,
+      phone TEXT,
+      received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS wa_message_logs (
+      id INTEGER PRIMARY KEY,
+      conversation_id INTEGER,
+      phone TEXT,
+      raw TEXT,
+      norm TEXT,
+      layer TEXT,
+      intent TEXT,
+      result TEXT,
+      process_ms INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS failed_messages (
+      id INTEGER PRIMARY KEY,
+      conversation_id INTEGER,
+      phone TEXT,
+      raw TEXT,
+      norm TEXT,
+      reason TEXT,
+      layer TEXT,
+      resolved INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_wa_logs_created ON wa_message_logs(created_at);
+    CREATE INDEX IF NOT EXISTS idx_failed_resolved ON failed_messages(resolved, created_at);
     CREATE INDEX IF NOT EXISTS idx_wa_msg_id ON whatsapp_messages(waha_message_id);
     CREATE INDEX IF NOT EXISTS idx_wa_conv_phone ON whatsapp_conversations(phone);
     CREATE INDEX IF NOT EXISTS idx_wa_pending_status ON whatsapp_pending_actions(status);
+    CREATE INDEX IF NOT EXISTS idx_wa_processed_received ON wa_processed_messages(received_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_wa_pending_idempotency
       ON whatsapp_pending_actions(conversation_id, action_type, status)
       WHERE status = 'PENDING';
@@ -91,6 +123,70 @@ export function openDatabase(filename) {
   if (!menuColumns.some(col => col.name === 'stock')) db.exec('ALTER TABLE menus ADD COLUMN stock INTEGER NOT NULL DEFAULT 999');
   if (!menuColumns.some(col => col.name === 'description')) db.exec("ALTER TABLE menus ADD COLUMN description TEXT NOT NULL DEFAULT ''");
   if (!menuColumns.some(col => col.name === 'aliases')) db.exec("ALTER TABLE menus ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'");
+
+  // ── Katalog & pengaturan yang editable dari dashboard ──
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS menu_aliases (
+      id INTEGER PRIMARY KEY,
+      menu_id TEXT NOT NULL REFERENCES menus(id) ON DELETE CASCADE,
+      alias_norm TEXT NOT NULL,
+      alias_raw TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(menu_id, alias_norm)
+    );
+    CREATE INDEX IF NOT EXISTS idx_menu_alias_norm ON menu_aliases(alias_norm);
+    CREATE INDEX IF NOT EXISTS idx_menu_alias_menu ON menu_aliases(menu_id);
+
+    CREATE TABLE IF NOT EXISTS business_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS message_templates (
+      key TEXT PRIMARY KEY,
+      content TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // Migrasi alias lama (JSON) ke tabel acuan yang sudah dinormalisasi — sekali saja.
+  const aliasMigrationDone = db.prepare("SELECT value FROM business_settings WHERE key = 'aliases_migrated_v1'").get();
+  if (!aliasMigrationDone) {
+    const legacyAliasRows = db.prepare("SELECT id, aliases FROM menus WHERE aliases IS NOT NULL AND aliases != '' AND aliases != '[]'").all();
+    const insertAlias = db.prepare('INSERT OR IGNORE INTO menu_aliases(menu_id, alias_norm, alias_raw) VALUES (?, ?, ?)');
+    const migrateAliases = db.transaction((items) => {
+      for (const row of items) {
+        let aliases = [];
+        try { aliases = JSON.parse(row.aliases); } catch { aliases = []; }
+        for (const alias of aliases) {
+          const raw = String(alias ?? '').trim();
+          const norm = normalize(raw);
+          if (raw && norm) insertAlias.run(row.id, norm, raw);
+        }
+      }
+      db.prepare("INSERT OR REPLACE INTO business_settings(key, value, updated_at) VALUES ('aliases_migrated_v1', '1', CURRENT_TIMESTAMP)").run();
+    });
+    migrateAliases(legacyAliasRows);
+  }
+
+  const seedSetting = db.prepare('INSERT OR IGNORE INTO business_settings(key, value) VALUES (?, ?)');
+  [['opening_hours', ''], ['address', ''], ['phone', ''], ['business_name', 'Sambal Joelid']].forEach(([key, value]) => seedSetting.run(key, value));
+
+  // ── State bot dipisah dari kolom `state` lama (lihat DECISIONS.md D3) ──
+  const conversationColumnsAfter = db.prepare('PRAGMA table_info(whatsapp_conversations)').all();
+  if (!conversationColumnsAfter.some(col => col.name === 'bot_state')) {
+    db.exec("ALTER TABLE whatsapp_conversations ADD COLUMN bot_state TEXT NOT NULL DEFAULT 'IDLE'");
+  }
+  if (!conversationColumnsAfter.some(col => col.name === 'draft_order_json')) {
+    db.exec('ALTER TABLE whatsapp_conversations ADD COLUMN draft_order_json TEXT');
+  }
+  if (!conversationColumnsAfter.some(col => col.name === 'fail_count')) {
+    db.exec('ALTER TABLE whatsapp_conversations ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!conversationColumnsAfter.some(col => col.name === 'handoff')) {
+    db.exec('ALTER TABLE whatsapp_conversations ADD COLUMN handoff INTEGER NOT NULL DEFAULT 0');
+  }
 
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_wa_conv_chat_id ON whatsapp_conversations(chat_id)');
 

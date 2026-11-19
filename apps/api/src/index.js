@@ -1,5 +1,8 @@
 import 'dotenv/config';
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
@@ -10,10 +13,16 @@ import { Server } from 'socket.io';
 import { z } from 'zod';
 import { openDatabase, orderTransitions, complaintTransitions } from './database.js';
 import { WAHAClient } from './services/waha.js';
-import { AIEngine, detectIntentHint, selectRelevantMenus } from './services/ai.js';
 import { OrderComplaintBridge } from './services/orderComplaintBridge.js';
 import { CatalogService } from './services/catalog.js';
-import { CartManager, resolveBranch, parseBranchFromText, parseNameFromText } from './services/cartManager.js';
+import { IncomingPipeline, verifyWebhookSignature } from './webhook.js';
+import { MenuMatcher } from './menuMatcher.js';
+import { LLMClient } from './llm.js';
+import { BotHandler } from './bot.js';
+import { TemplateStore } from './templates.js';
+import { StateStore } from './state.js';
+import { normalize } from './normalize.js';
+import { MessageLogger } from './logger.js';
 
 const env = {
   port: Number(process.env.PORT || 3001), dbPath: process.env.CUSTOMER_MODULE_DB_PATH || './data/customer-module.sqlite',
@@ -26,13 +35,19 @@ const env = {
   aiBaseUrl: process.env.AI_BASE_URL || 'http://127.0.0.1:8080/v1',
   aiModel: process.env.AI_MODEL || 'qwen2.5-1.5b-instruct',
   aiApiKey: process.env.AI_API_KEY || '',
-  aiTimeoutMs: Number(process.env.AI_TIMEOUT_MS || 90000),
+  aiTimeoutMs: Number(process.env.AI_TIMEOUT_MS || 25000),
+  whatsappDebounceMs: Number(process.env.WHATSAPP_DEBOUNCE_MS || 4000),
+  llmHealthCheckMs: Number(process.env.LLM_HEALTH_CHECK_MS || 120000),
+  replyDelayMinMs: Number(process.env.WHATSAPP_REPLY_DELAY_MIN_MS || 1000),
+  replyDelayMaxMs: Number(process.env.WHATSAPP_REPLY_DELAY_MAX_MS || 3000),
+  testSetPath: process.env.TEST_SET_PATH || fileURLToPath(new URL('../test/eval/testset.jsonl', import.meta.url)),
   whatsappRateWindowMs: Number(process.env.WHATSAPP_RATE_LIMIT_WINDOW_SECONDS || 60) * 1000,
   whatsappRateMax: Number(process.env.WHATSAPP_RATE_LIMIT_MAX_MESSAGES || 8),
   whatsappRetentionDays: Number(process.env.WHATSAPP_MESSAGE_RETENTION_DAYS || 30),
   adminPauseSeconds: Number(process.env.WHATSAPP_ADMIN_PAUSE_SECONDS || 180),
   catalogUrl: process.env.MENU_CSV_URL || '',
   catalogTtlMs: Number(process.env.MENU_CACHE_SECONDS || 60) * 1000,
+  catalogImportOnStart: process.env.MENU_CSV_IMPORT_ON_START === 'true',
   bankName: process.env.PAYMENT_BANK_NAME || '',
   bankAccount: process.env.PAYMENT_BANK_ACCOUNT || '',
   bankHolder: process.env.PAYMENT_BANK_HOLDER || '',
@@ -45,13 +60,32 @@ if (process.env.NODE_ENV === 'production' && (!process.env.WAHA_API_KEY || !proc
 }
 const db = openDatabase(env.dbPath);
 const waha = new WAHAClient(env.wahaBaseUrl, env.wahaApiKey, env.wahaSession);
-const ai = new AIEngine({ baseUrl: env.aiBaseUrl, model: env.aiModel, apiKey: env.aiApiKey, timeoutMs: env.aiTimeoutMs });
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: env.origins, methods: ['GET', 'POST'] } });
 const bridge = new OrderComplaintBridge(db, waha, io);
-const catalog = new CatalogService({ url: env.catalogUrl, ttlMs: env.catalogTtlMs, db });
-const cartManager = new CartManager(db);
+const catalog = new CatalogService({ url: env.catalogUrl, ttlMs: env.catalogTtlMs, db, importOnStart: env.catalogImportOnStart });
+const menuMatcher = new MenuMatcher({ getMenus: () => catalog.getMenus() });
+const templates = new TemplateStore(db);
+const stateStore = new StateStore(db);
+const llm = new LLMClient({
+  baseUrl: env.aiBaseUrl,
+  model: env.aiModel,
+  apiKey: env.aiApiKey,
+  timeoutMs: env.aiTimeoutMs,
+});
+const messageLogger = new MessageLogger(db);
+const bot = new BotHandler({
+  db,
+  catalog,
+  matcher: menuMatcher,
+  llm,
+  bridge,
+  templates,
+  state: stateStore,
+  logger: console,
+});
+catalog.init().catch((error) => console.error('[CATALOG] Init gagal:', error.message));
 const messageRateBuckets = new Map();
 let lastWebhookAt = null;
 
@@ -59,6 +93,11 @@ if (env.whatsappRetentionDays > 0) {
   db.prepare("DELETE FROM whatsapp_messages WHERE created_at < datetime('now', ?)")
     .run(`-${env.whatsappRetentionDays} days`);
   db.prepare("DELETE FROM whatsapp_pending_actions WHERE status != 'PENDING' AND created_at < datetime('now', ?)")
+    .run(`-${env.whatsappRetentionDays} days`);
+  db.prepare("DELETE FROM wa_processed_messages WHERE received_at < datetime('now', '-7 days')").run();
+  db.prepare("DELETE FROM wa_message_logs WHERE created_at < datetime('now', ?)")
+    .run(`-${env.whatsappRetentionDays} days`);
+  db.prepare("DELETE FROM failed_messages WHERE resolved = 1 AND created_at < datetime('now', ?)")
     .run(`-${env.whatsappRetentionDays} days`);
 }
 app.set('trust proxy', 1);
@@ -69,22 +108,6 @@ const api = express.Router(); app.use('/api/v1', api);
 const phone = z.string().trim().regex(/^\+?[0-9]{8,16}$/, 'Nomor WhatsApp tidak valid');
 const orderInput = z.object({ customerName: z.string().trim().min(2).max(100), customerPhone: phone, branchId: z.string().min(1), notes: z.string().trim().max(500).optional(), items: z.array(z.object({ menuId: z.string().min(1), quantity: z.number().int().min(1).max(99) })).min(1).max(20) });
 const complaintInput = z.object({ customerName: z.string().trim().min(2).max(100), customerPhone: phone, branchId: z.string().optional(), category: z.enum(['KUALITAS_MAKANAN','PELAYANAN','KEBERSIHAN','PESANAN','LAINNYA']).optional(), description: z.string().trim().min(10).max(2000) });
-
-function normalizePhoneNumber(phone) {
-  const localPart = String(phone).split('@')[0].split(':')[0];
-  let normalized = localPart.replace(/\D/g, '');
-  if (!normalized.startsWith('62') && normalized.startsWith('0')) normalized = '62' + normalized.slice(1);
-  if (!normalized.startsWith('62')) normalized = '62' + normalized;
-  return normalized;
-}
-
-function verifyWebhookSignature(body, signature) {
-  if (!body || typeof signature !== 'string') return false;
-  const expected = crypto.createHmac('sha512', env.wahaWebhookSecret).update(body).digest('hex');
-  const actualBuffer = Buffer.from(signature, 'utf8');
-  const expectedBuffer = Buffer.from(expected, 'utf8');
-  return actualBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
-}
 
 function isRateLimited(phoneNumber) {
   const now = Date.now();
@@ -107,331 +130,61 @@ function formatMenuList(menus) {
 function resumeExpiredConversations() {
   const expired = db.prepare("SELECT id FROM whatsapp_conversations WHERE state != 'AI_ACTIVE' AND paused_until IS NOT NULL AND paused_until <= CURRENT_TIMESTAMP").all();
   if (!expired.length) return;
-  db.prepare("UPDATE whatsapp_conversations SET state='AI_ACTIVE', paused_until=NULL, updated_at=CURRENT_TIMESTAMP WHERE state != 'AI_ACTIVE' AND paused_until IS NOT NULL AND paused_until <= CURRENT_TIMESTAMP").run();
+  db.prepare("UPDATE whatsapp_conversations SET state='AI_ACTIVE', paused_until=NULL, bot_state='IDLE', draft_order_json=NULL, fail_count=0, handoff=0, updated_at=CURRENT_TIMESTAMP WHERE state != 'AI_ACTIVE' AND paused_until IS NOT NULL AND paused_until <= CURRENT_TIMESTAMP").run();
   expired.forEach(({ id }) => io.to('admins').emit('whatsapp:conversation-updated', { conversationId: id, state: 'AI_ACTIVE' }));
 }
 setInterval(resumeExpiredConversations, 15_000).unref();
 
-async function handleIncomingMessage(wahaMessage) {
-  // Filter: hanya personal chat, bukan group (@g.us), bukan status, bukan milik sendiri
-  const rawChatId = wahaMessage.from || '';
-  const [chatLocalPart, chatDomain] = rawChatId.split('@');
-  const chatId = chatDomain ? `${chatLocalPart.split(':')[0]}@${chatDomain}` : rawChatId;
-  if (wahaMessage.fromMe || chatId.endsWith('@g.us') || chatId.endsWith('@newsletter') || chatId.endsWith('@broadcast')) return null;
-  if (!wahaMessage.body || wahaMessage.body.trim().length === 0 || wahaMessage.hasMedia) return null;
-
-  const senderAlt = wahaMessage._data?.Info?.SenderAlt;
-  const normalizedPhone = normalizePhoneNumber(senderAlt || rawChatId);
-  const messageContent = wahaMessage.body.trim();
-
-  // Deduplikasi: cek apakah messageId sudah pernah diproses
-  const existingMsg = db.prepare('SELECT id FROM whatsapp_messages WHERE waha_message_id = ?').get(wahaMessage.id);
-  if (existingMsg) {
-    console.log(`[WAHA] Message ID ${wahaMessage.id} sudah diproses, skip.`);
-    return null;
-  }
-
-  if (isRateLimited(normalizedPhone)) {
-    console.warn(`[WAHA] Rate limit tercapai untuk nomor berakhiran ${normalizedPhone.slice(-4)}`);
-    return null;
-  }
-
-  // Buat atau update conversation
-  let conv = db.prepare('SELECT id FROM whatsapp_conversations WHERE chat_id = ? OR phone = ?').get(chatId, normalizedPhone);
+function upsertConversation(phone, chatId) {
+  const conv = db.prepare('SELECT id FROM whatsapp_conversations WHERE chat_id = ? OR phone = ?').get(chatId, phone);
   if (!conv) {
-    const result = db.prepare('INSERT INTO whatsapp_conversations(phone, chat_id, state, created_at, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)').run(normalizedPhone, chatId, 'AI_ACTIVE');
-    conv = { id: result.lastInsertRowid };
-  } else {
-    db.prepare('UPDATE whatsapp_conversations SET chat_id = ?, phone = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(chatId, normalizedPhone, conv.id);
+    const result = db.prepare('INSERT INTO whatsapp_conversations(phone, chat_id, state, created_at, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)').run(phone, chatId, 'AI_ACTIVE');
+    return Number(result.lastInsertRowid);
   }
-
-  // Simpan pesan inbound
-  db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(conv.id, wahaMessage.id, 'INBOUND', 'CUSTOMER', messageContent);
-
-  // Update timestamp percakapan
-  db.prepare('UPDATE whatsapp_conversations SET last_message_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(conv.id);
-
-  return { conversationId: conv.id, phone: normalizedPhone, chatId, message: messageContent };
+  db.prepare('UPDATE whatsapp_conversations SET chat_id = ?, phone = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(chatId, phone, conv.id);
+  return conv.id;
 }
 
-async function processMessage(conversationId, phone, chatId, message) {
-  let conv = db.prepare('SELECT state, paused_until FROM whatsapp_conversations WHERE id = ?').get(conversationId);
+function saveInbound(conversationId, messageId, content) {
+  db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)')
+    .run(conversationId, messageId, 'INBOUND', 'CUSTOMER', content);
+  db.prepare('UPDATE whatsapp_conversations SET last_message_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(conversationId);
+}
 
-  if (conv.state !== 'AI_ACTIVE' && conv.paused_until && new Date(conv.paused_until).getTime() <= Date.now()) {
-    db.prepare("UPDATE whatsapp_conversations SET state='AI_ACTIVE', paused_until=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(conversationId);
-    conv = { state: 'AI_ACTIVE', paused_until: null };
-    io.to('admins').emit('whatsapp:conversation-updated', { conversationId, state: 'AI_ACTIVE' });
-  }
+async function markHandoff(conversationId, chatId, text) {
+  db.prepare("UPDATE whatsapp_conversations SET state='WAITING_ADMIN', paused_until=NULL, handoff=1, bot_state='HANDOFF', updated_at=CURRENT_TIMESTAMP WHERE id=?")
+    .run(conversationId);
+  await waha.sendMessage(chatId, text);
+  db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)')
+    .run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', text);
+  io.to('admins').emit('whatsapp:conversation-updated', { conversationId, state: 'WAITING_ADMIN' });
+}
 
-  if (conv.state !== 'AI_ACTIVE') {
-    io.to('admins').emit('whatsapp:message-received', { conversationId, phone, message });
-    return;
-  }
-
-  // Helper: kirim pesan dan simpan ke DB
-  const send = async (text) => {
-    await waha.sendMessage(chatId, text);
-    db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)')
-      .run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', text);
-  };
-
+async function sendStored(conversationId, chatId, text) {
+  if (!text) return;
+  const min = Math.max(0, Math.min(env.replyDelayMinMs, env.replyDelayMaxMs));
+  const max = Math.max(min, env.replyDelayMaxMs);
+  const delay = min + Math.floor(Math.random() * (max - min + 1));
+  await waha.startTyping(chatId).catch(() => {});
+  if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
   try {
-    const menus = await catalog.getMenus();
-    const branches = db.prepare('SELECT id, name FROM branches WHERE active = 1').all();
-    const hint = detectIntentHint(message);
-    const msgLower = message.toLowerCase();
-
-    // ── Handoff ──
-    const handoffKeywords = ['admin', 'operator', 'manusia'];
-    if (hint === 'HANDOFF' || handoffKeywords.some(kw => msgLower.includes(kw))) {
-      db.prepare('UPDATE whatsapp_conversations SET state=?, paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run('WAITING_ADMIN', pauseUntil(), conversationId);
-      await send('👋 Mohon tunggu, kami sedang menghubungkan Anda dengan tim admin kami...');
-      io.to('admins').emit('whatsapp:conversation-updated', { conversationId, state: 'WAITING_ADMIN' });
-      return;
-    }
-
-    // ── Greeting ──
-    if (hint === 'GREETING') {
-      await send(helpText);
-      return;
-    }
-
-    // ── Menu list ──
-    if (hint === 'MENU') {
-      await send(formatMenuList(menus));
-      return;
-    }
-
-    // ── Keluhan (complaint masih pakai pending action sederhana) ──
-    if (hint === 'COMPLAINT') {
-      const description = message.trim().slice(0, 2000);
-      if (description.length < 10) {
-        await send('Mohon ceritakan keluhan Anda dengan lebih lengkap agar dapat kami catat dan teruskan kepada admin.');
-        return;
-      }
-      bridge.savePendingAction(conversationId, 'COMPLAINT_CONFIRMATION', {
-        customerName: 'Pelanggan',
-        branchId: null,
-        category: null,
-        description,
-      });
-      await send(`📝 Kami mencatat keluhan Anda:\n\n"${description}"\n\nBalas *YA* untuk mengirim keluhan atau *BATAL* untuk membatalkan.`);
-      return;
-    }
-
-    // ── Cek pending complaint confirmation ──
-    const pendingComplaint = db.prepare(
-      "SELECT * FROM whatsapp_pending_actions WHERE conversation_id = ? AND action_type = 'COMPLAINT_CONFIRMATION' AND status = 'PENDING' AND expires_at > CURRENT_TIMESTAMP ORDER BY created_at DESC LIMIT 1"
-    ).get(conversationId);
-
-    if (pendingComplaint) {
-      if (cartManager.isConfirmYes(message)) {
-        const payload = JSON.parse(pendingComplaint.payload_json);
-        bridge.updatePendingActionStatus(pendingComplaint.id, 'CONFIRMED');
-        const complaint = bridge.createComplaint(conversationId, payload.customerName, phone, payload.branchId, payload.category, payload.description);
-        await send(`✅ Keluhan Anda telah kami terima.\n\nNomor Referensi: *${complaint.reference}*\n\nTim kami akan menghubungi Anda segera. Terima kasih, Kak! 🙏`);
-        return;
-      }
-      if (cartManager.isConfirmNo(message)) {
-        bridge.updatePendingActionStatus(pendingComplaint.id, 'CANCELLED');
-        await send('Baik, keluhan dibatalkan. Ada yang bisa kami bantu lagi, Kak? 😊');
-        return;
-      }
-    }
-
-    // ── ORDER FLOW — cart interaktif ──
-    let cart = cartManager.get(conversationId);
-
-    // Jika pelanggan menyebut kata yang mengindikasikan ingin memesan baru dari awal
-    const isRestartOrder = /\b(mau pesan|pesan lagi|order baru|mulai ulang|ulang pesanan|ganti pesanan|hapus semua)\b/i.test(message);
-    if (isRestartOrder && cart) {
-      cart = cartManager.create(conversationId);
-    }
-
-    // Jika sedang menunggu konfirmasi order
-    if (cart && cart.step === 'CONFIRMING') {
-      if (cartManager.isConfirmYes(message)) {
-        // Checkout
-        try {
-          const order = bridge.createOrderFromConfirmation(
-            conversationId,
-            cart.customer_name,
-            phone,
-            cart.branch_id,
-            cart.items,
-            cart.notes
-          );
-          cartManager.done(conversationId);
-          const payment = env.bankName && env.bankAccount && env.bankHolder
-            ? `\n\n💳 *Informasi Transfer*\n${env.bankName} — ${env.bankAccount}\na.n. ${env.bankHolder}\n\nSetelah transfer, kirim bukti pembayaran ke chat ini ya, Kak.`
-            : '';
-          await send(`✅ Yeay! Pesanan Anda berhasil dicatat! 🎉\n\nNomor Pesanan: *${order.reference}*\nTotal: *Rp ${order.totalAmount.toLocaleString('id-ID')}*${payment}\n\nTerima kasih sudah memesan di Sambal Joelid, Kak ${cart.customer_name}! ❤️`);
-        } catch (e) {
-          console.error('[ORDER] Checkout gagal:', e.message);
-          if (e.message.includes('MENU_NOT_FOUND') || e.message.includes('INSUFFICIENT_STOCK')) {
-            await send('Mohon maaf kak, ada menu yang stoknya habis saat dikonfirmasi. Ketik *menu* untuk melihat menu yang tersedia dan ulangi pesanan ya.');
-          } else {
-            await send('Mohon maaf, terjadi kendala saat memproses pesanan. Tim kami akan segera membantu ya, Kak! 🙏');
-            db.prepare('UPDATE whatsapp_conversations SET state=?, paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run('WAITING_ADMIN', pauseUntil(), conversationId);
-            io.to('admins').emit('whatsapp:conversation-updated', { conversationId, state: 'WAITING_ADMIN' });
-          }
-        }
-        return;
-      }
-
-      if (cartManager.isConfirmNo(message)) {
-        cartManager.done(conversationId);
-        await send('Baik, pesanan dibatalkan ya, Kak. Kalau mau pesan lagi, langsung ceritakan saja! 😊');
-        return;
-      }
-
-      // Bukan YA/BATAL → anggap edit pesanan, lanjut ke AI
-    }
-
-    // ── Cart: buat baru jika belum ada ──
-    // Reset otomatis jika cart lama DONE dan pesan terindikasi order baru
-    if (!cart) {
-      if (hint === 'ORDER' || hint === null) {
-        cart = cartManager.create(conversationId);
-      } else {
-        await send('Ada yang bisa kami bantu, Kak? Mau pesan atau ada keluhan? 😊');
-        return;
-      }
-    }
-
-    // ── Shortcut: parse branch & nama dari teks langsung (tanpa AI) ──
-    const missingNow = cartManager.missingFields(cart);
-
-    // Tangani jika pelanggan sedang ditanya cabang
-    if (missingNow.includes('branch') && cart.items.length > 0) {
-      const directBranch = parseBranchFromText(message, branches);
-      if (directBranch) {
-        cart.branch_id = directBranch.id;
-        cartManager.save(cart);
-        cart = cartManager.get(conversationId);
-        const nextMissing = cartManager.missingFields(cart);
-        if (nextMissing.length === 0) {
-          cart.step = 'CONFIRMING';
-          cartManager.save(cart);
-          const { text: summary } = cartManager.buildSummary(cart, menus, branches);
-          await send(summary);
-          return;
-        }
-        if (nextMissing.includes('name')) {
-          await send('Boleh tahu nama Kakak untuk pesanannya? 😊');
-          return;
-        }
-      }
-    }
-
-    // Tangani jika pelanggan sedang ditanya nama
-    if (missingNow.includes('name') && cart.items.length > 0) {
-      let directName = parseNameFromText(message);
-      // Jika pesan 1-3 kata dan hanya berisi huruf (misal: "Aldi", "Budi Santoso")
-      if (!directName && /^[a-zA-Z\s]{2,30}$/.test(message.trim())) {
-        const cleaned = message.trim();
-        const lower = cleaned.toLowerCase();
-        const nonNames = ['ya', 'tidak', 'batal', 'ok', 'oke', 'pesan', 'order', 'menu', 'admin', 'pusat', 'barat', 'timur', 'utara', 'selatan', 'tengah', 'nama'];
-        if (!nonNames.includes(lower) && !branches.some(b => b.name.toLowerCase().includes(lower) || b.id.toLowerCase() === lower)) {
-          directName = cleaned;
-        }
-      }
-
-      if (directName) {
-        cart.customer_name = directName;
-        cartManager.save(cart);
-        cart = cartManager.get(conversationId);
-        const nextMissing = cartManager.missingFields(cart);
-        if (nextMissing.length === 0) {
-          cart.step = 'CONFIRMING';
-          cartManager.save(cart);
-          const { text: summary } = cartManager.buildSummary(cart, menus, branches);
-          await send(summary);
-          return;
-        }
-        // Nama sudah tersimpan, lanjut cek field berikutnya (branch)
-        if (nextMissing.includes('branch')) {
-          const branchList = branches.map(b => `• *${b.name}*`).join('\n');
-          await send(`Siap Kak ${directName}! Mau dipesan dari cabang mana?\n\n${branchList}`);
-          return;
-        }
-      }
-    }
-
-    const history = db.prepare(
-      'SELECT sender_type, content FROM whatsapp_messages WHERE conversation_id=? ORDER BY id DESC LIMIT 4'
-    ).all(conversationId).reverse();
-    if (history.at(-1)?.sender_type === 'CUSTOMER' && history.at(-1)?.content === message) history.pop();
-
-    const aiMenus = selectRelevantMenus(message, history, menus, 4);
-    let aiResult;
-    try {
-      aiResult = await ai.processOrderMessage(message, { menus: aiMenus, branches, cart }, history);
-    } catch (e) {
-      if (e.message === 'AI_TIMEOUT') {
-        await send('Mohon maaf, respons kami sedang lambat. Coba kirim pesan lagi ya, Kak! 🙏');
-        return;
-      }
-      throw e;
-    }
-
-    if (aiResult.intent === 'HANDOFF') {
-      db.prepare('UPDATE whatsapp_conversations SET state=?, paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run('WAITING_ADMIN', pauseUntil(), conversationId);
-      await send('👋 Mohon tunggu, kami sedang menghubungkan Anda dengan tim admin kami...');
-      io.to('admins').emit('whatsapp:conversation-updated', { conversationId, state: 'WAITING_ADMIN' });
-      return;
-    }
-    if (aiResult.intent === 'MENU') {
-      await send(formatMenuList(menus));
-      return;
-    }
-    if (aiResult.intent === 'COMPLAINT') {
-      await send('Mohon maaf atas ketidaknyamanannya, Kak. Ceritakan keluhan Anda secara lengkap ya, kami akan segera catat dan tindaklanjuti. 🙏');
-      return;
-    }
-
-    // Terapkan actions dari AI ke cart
-    const warnings = cartManager.applyActions(cart, aiResult.actions || [], menus, branches);
-    cartManager.save(cart);
-
-    // Reload cart dari DB (pastikan data terbaru)
-    cart = cartManager.get(conversationId);
-
-    // Menu tidak dikenali → tunjukkan daftar
-    const notFound = warnings.filter(w => w.includes('tidak tersedia'));
-    if (notFound.length > 0) {
-      await send(`Mohon maaf kak, beberapa menu tidak kami temukan:\n${notFound.map(w => `• ${w}`).join('\n')}\n\nKetik *menu* untuk melihat daftar menu ya! 😊`);
-      return;
-    }
-
-    // Backend yang tanya field yang kurang — JANGAN pakai replyText dari AI
-    // Urutan: items dulu → branch → nama terakhir
-    const missing = cartManager.missingFields(cart);
-    if (missing.includes('items')) {
-      await send('Mau pesan menu apa hari ini, Kak? Sebutkan nama menu dan jumlahnya ya! 😊');
-      return;
-    }
-    if (missing.includes('branch')) {
-      const branchList = branches.map(b => `• *${b.name}*`).join('\n');
-      await send(`Siap Kak! Mau dipesan dari cabang mana?\n\n${branchList}`);
-      return;
-    }
-    if (missing.includes('name')) {
-      await send('Boleh tahu nama Kakak untuk pesanannya? 😊');
-      return;
-    }
-
-    // Semua field lengkap → tampilkan ringkasan konfirmasi
-    cart.step = 'CONFIRMING';
-    cartManager.save(cart);
-    const { text: summary } = cartManager.buildSummary(cart, menus, branches);
-    await send(summary);
-  } catch (error) {
-    console.error('[processMessage] Error:', error.message);
-    const fallback = '⏳ Mohon maaf, ada kendala operasional saat ini. Silakan coba lagi beberapa saat atau ketik *admin* untuk bantuan langsung.';
-    try { await send(fallback); } catch (sendErr) { console.error('[WAHA] Fallback gagal:', sendErr.message); }
+    await waha.sendMessage(chatId, text);
+  } finally {
+    await waha.stopTyping(chatId).catch(() => {});
   }
+  db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)')
+    .run(conversationId, `outbound-${crypto.randomUUID()}`, 'OUTBOUND', 'AI', text);
+  io.to('admins').emit('whatsapp:message-received', { conversationId, sender: 'AI' });
 }
+
+let llmHealthCheckedAt = null;
+async function refreshLLMHealth() {
+  await llm.health();
+  llmHealthCheckedAt = new Date().toISOString();
+}
+refreshLLMHealth();
+setInterval(refreshLLMHealth, env.llmHealthCheckMs).unref();
+
 function auth(req, res, next) { try { req.admin = jwt.verify(req.headers.authorization?.replace('Bearer ', ''), env.jwtSecret); next(); } catch { res.status(401).json({ error: 'UNAUTHORIZED', message: 'Autentikasi admin diperlukan.' }); } }
 function validate(schema) { return (req, res, next) => { const result = schema.safeParse(req.body); if (!result.success) return res.status(422).json({ error: 'VALIDATION_ERROR', details: result.error.flatten() }); req.body = result.data; next(); }; }
 
@@ -446,6 +199,132 @@ api.get('/public/menu', async (_, res) => {
   res.json(menus.filter(menu => menu.active && menu.stock > 0).sort((a, b) => a.name.localeCompare(b.name)));
 });
 api.get('/public/branches', (_, res) => res.json(rows('SELECT id,name FROM branches WHERE active=1 ORDER BY name')));
+api.get('/public/info', (_, res) => {
+  const settings = Object.fromEntries(rows('SELECT key, value FROM business_settings').map(row => [row.key, row.value]));
+  res.json(settings);
+});
+
+// ── Admin: menu, alias, jam/lokasi, template ─────────────────────────────────
+const menuInput = z.object({
+  id: z.string().trim().regex(/^[a-z0-9-]{2,60}$/, 'ID menu hanya huruf kecil, angka, dan tanda hubung'),
+  name: z.string().trim().min(2).max(100),
+  price: z.number().int().min(0).max(100_000_000),
+  stock: z.number().int().min(0).max(999_999).optional(),
+  active: z.boolean().optional(),
+  description: z.string().trim().max(500).optional(),
+});
+const menuPatch = menuInput.omit({ id: true }).partial();
+const aliasInput = z.object({ aliases: z.array(z.string().trim().min(1).max(80)).max(30) });
+const settingsInput = z.object({
+  opening_hours: z.string().trim().max(300).optional(),
+  address: z.string().trim().max(500).optional(),
+  phone: z.string().trim().max(40).optional(),
+  business_name: z.string().trim().max(120).optional(),
+});
+
+api.get('/admin/menus', auth, async (_, res) => res.json(await catalog.getMenus()));
+
+api.post('/admin/menus', auth, validate(menuInput), (req, res) => {
+  try {
+    const menu = catalog.createMenu(req.body);
+    menuMatcher.invalidate();
+    res.status(201).json(menu);
+  } catch (error) {
+    res.status(422).json({ error: 'MENU_CREATE_FAILED', message: error.message });
+  }
+});
+
+api.patch('/admin/menus/:id', auth, validate(menuPatch), (req, res) => {
+  const menu = catalog.updateMenu(req.params.id, req.body);
+  if (!menu) return res.sendStatus(404);
+  menuMatcher.invalidate();
+  res.json(menu);
+});
+
+api.put('/admin/menus/:id/aliases', auth, validate(aliasInput), (req, res) => {
+  const menu = catalog.replaceAliases(req.params.id, req.body.aliases);
+  if (!menu) return res.sendStatus(404);
+  menuMatcher.invalidate();
+  res.json(menu);
+});
+
+api.post('/admin/menus/:id/aliases', auth, validate(z.object({ alias: z.string().trim().min(1).max(80) })), (req, res) => {
+  const menu = catalog.addAlias(req.params.id, req.body.alias);
+  if (!menu) return res.sendStatus(404);
+  menuMatcher.invalidate();
+  res.json(menu);
+});
+
+api.delete('/admin/menus/:id', auth, (req, res) => {
+  const deleted = catalog.deleteMenu(req.params.id);
+  if (!deleted) return res.sendStatus(404);
+  menuMatcher.invalidate();
+  res.sendStatus(204);
+});
+
+api.post('/admin/menus/import-csv', auth, async (_, res) => {
+  try {
+    const count = await catalog.importFromUrl();
+    menuMatcher.invalidate();
+    res.json({ imported: count });
+  } catch (error) {
+    res.status(422).json({ error: 'IMPORT_FAILED', message: error.message });
+  }
+});
+
+api.get('/admin/settings', auth, (_, res) => {
+  res.json(Object.fromEntries(rows('SELECT key, value FROM business_settings').map(row => [row.key, row.value])));
+});
+
+api.put('/admin/settings', auth, validate(settingsInput), (req, res) => {
+  const save = db.prepare('INSERT INTO business_settings(key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP');
+  db.transaction(() => {
+    for (const [key, value] of Object.entries(req.body)) save.run(key, value);
+  })();
+  res.json(Object.fromEntries(rows('SELECT key, value FROM business_settings').map(row => [row.key, row.value])));
+});
+
+api.get('/admin/templates', auth, (_, res) => {
+  res.json(Object.fromEntries(rows('SELECT key, content FROM message_templates').map(row => [row.key, row.content])));
+});
+
+api.put('/admin/templates/:key', auth, validate(z.object({ content: z.string().trim().min(1).max(2000) })), (req, res) => {
+  const key = String(req.params.key);
+  if (!/^[a-z0-9_]{2,40}$/.test(key)) return res.status(422).json({ error: 'INVALID_TEMPLATE_KEY' });
+  db.prepare('INSERT INTO message_templates(key, content, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET content=excluded.content, updated_at=CURRENT_TIMESTAMP')
+    .run(key, req.body.content);
+  res.json({ key, content: req.body.content });
+});
+
+// ── Admin: pesan gagal dipahami ──────────────────────────────────────────────
+api.get('/admin/failed-messages', auth, (req, res) => {
+  res.json(messageLogger.listFailed({ limit: req.query.limit, offset: req.query.offset, resolved: req.query.resolved === '1' ? 1 : 0 }));
+});
+
+api.patch('/admin/failed-messages/:id/resolve', auth, (req, res) => {
+  if (!messageLogger.resolve(req.params.id)) return res.sendStatus(404);
+  res.sendStatus(204);
+});
+
+api.post('/admin/failed-messages/:id/alias', auth, validate(z.object({ menuId: z.string().trim().min(1).max(80) })), (req, res) => {
+  const failed = messageLogger.getFailed(req.params.id);
+  if (!failed) return res.sendStatus(404);
+  const menu = catalog.addAlias(req.body.menuId, failed.raw);
+  if (!menu) return res.status(422).json({ error: 'MENU_NOT_FOUND' });
+  menuMatcher.invalidate();
+  messageLogger.resolve(failed.id);
+  res.json({ menu, resolved: true });
+});
+
+api.post('/admin/failed-messages/:id/testset', auth, (req, res) => {
+  const failed = messageLogger.getFailed(req.params.id);
+  if (!failed) return res.sendStatus(404);
+  const directory = path.dirname(env.testSetPath);
+  fs.mkdirSync(directory, { recursive: true });
+  fs.appendFileSync(env.testSetPath, `${JSON.stringify({ pesan: failed.raw, intent: '', items: [] })}\n`, 'utf8');
+  messageLogger.resolve(failed.id);
+  res.json({ appended: true, path: env.testSetPath });
+});
 api.post('/public/orders', publicLimiter, validate(orderInput), (req, res) => {
   const create = db.transaction((input) => {
     if (!db.prepare('SELECT 1 FROM branches WHERE id=? AND active=1').get(input.branchId)) throw new Error('BRANCH_NOT_FOUND');
@@ -475,27 +354,76 @@ api.patch('/admin/complaints/:id/notes', auth, validate(z.object({ adminNotes: z
 function updateStatus(table, _transitions, event, req, res) { const item = db.prepare(`SELECT id,status FROM ${table} WHERE id=?`).get(req.params.id); if (!item) return res.sendStatus(404); db.prepare(`UPDATE ${table} SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(req.body.status, item.id); io.to('admins').emit(event, { id: item.id, status: req.body.status }); res.sendStatus(204); }
 
 // WhatsApp Webhook
-api.post('/integrations/waha/webhook', async (req, res) => {
+const messagePipeline = new IncomingPipeline({
+  db,
+  delayMs: env.whatsappDebounceMs,
+  processBatch: async ({ phone, chatId, raw, messageIds }) => {
+    const conversationId = upsertConversation(phone, chatId);
+    saveInbound(conversationId, messageIds[0], raw);
+    const startedAt = Date.now();
+    const norm = normalize(raw);
+
+    if (isRateLimited(phone)) {
+      console.warn(`[WAHA] Rate limit tercapai untuk nomor berakhiran ${phone.slice(-4)}`);
+      await sendStored(conversationId, chatId, templates.render('rate_limit')).catch(() => {});
+      return;
+    }
+
+    let result = null;
+    try {
+      result = await bot.handle({ conversationId, phone, raw, norm });
+    } catch (error) {
+      console.error('[Bot] Kesalahan tak terduga:', error.message);
+      stateStore.setHandoff(conversationId);
+      await sendStored(conversationId, chatId, templates.render('timeout')).catch(() => {});
+      messageLogger.fail({ conversationId, phone, raw, norm, reason: 'ERROR', layer: 'error' });
+      return;
+    }
+    messageLogger.log({
+      conversationId,
+      phone,
+      raw,
+      norm,
+      layer: result?.layer ?? 'fallback',
+      intent: result?.intent ?? null,
+      result: result ? (result.handoff ? 'handoff' : 'reply') : 'skip',
+      processMs: Date.now() - startedAt,
+    });
+    if (result && (result.layer === 'fallback' || result.handoff)) {
+      messageLogger.fail({
+        conversationId,
+        phone,
+        raw,
+        norm,
+        reason: result.handoff ? 'handoff' : 'tidak_paham',
+        layer: result.layer,
+      });
+    }
+    if (result?.reply) await sendStored(conversationId, chatId, result.reply);
+  },
+  onUnsupported: async ({ phone, chatId, messageId, raw }) => {
+    const conversationId = upsertConversation(phone, chatId);
+    const content = raw || '[media]';
+    saveInbound(conversationId, messageId, content);
+    messageLogger.log({ conversationId, phone, raw: content, norm: normalize(raw), layer: 'fallback', result: 'handoff' });
+    messageLogger.fail({ conversationId, phone, raw: content, norm: normalize(raw), reason: 'media', layer: 'fallback' });
+    await markHandoff(conversationId, chatId, templates.render('media'));
+  },
+});
+
+api.post('/integrations/waha/webhook', (req, res) => {
   try {
     // Verifikasi signature
     const signature = req.headers['x-webhook-hmac'];
-    if (req.headers['x-webhook-hmac-algorithm'] !== 'sha512' || !verifyWebhookSignature(req.rawBody, signature)) {
+    if (req.headers['x-webhook-hmac-algorithm'] !== 'sha512' || !verifyWebhookSignature(req.rawBody, signature, env.wahaWebhookSecret)) {
       return res.status(401).json({ error: 'INVALID_SIGNATURE' });
     }
 
     const wahaMessage = req.body;
     lastWebhookAt = new Date().toISOString();
 
-    // Handle message event
-    if (wahaMessage.event === 'message' && wahaMessage.session === env.wahaSession) {
-      const parsed = await handleIncomingMessage(wahaMessage.payload);
-      if (parsed) {
-        // Process async, don't wait
-        processMessage(parsed.conversationId, parsed.phone, parsed.chatId, parsed.message).catch(err => {
-          console.error('[Message Processing Error]', err);
-        });
-      }
-    }
+    // Filter, idempotensi, debounce, dan antrian ditangani pipeline.
+    messagePipeline.ingest(wahaMessage, env.wahaSession);
 
     res.status(200).json({ ok: true });
   } catch (error) {
@@ -507,15 +435,28 @@ api.post('/integrations/waha/webhook', async (req, res) => {
 api.get('/admin/integrations/health', auth, async (_req, res) => {
   const latestInbound = db.prepare("SELECT MAX(created_at) AS value FROM whatsapp_messages WHERE direction='INBOUND'").get().value;
   const webhookSeenAt = lastWebhookAt || latestInbound;
+  const llmStatus = llm.healthy === true ? 'ONLINE' : llm.healthy === false ? 'OFFLINE' : 'UNKNOWN';
+  const base = {
+    webhook: webhookSeenAt ? 'RECEIVING' : 'UNKNOWN',
+    lastWebhookAt: webhookSeenAt,
+    llm: llmStatus,
+    llmCheckedAt: llmHealthCheckedAt,
+    degraded: llm.healthy === false,
+  };
   try {
     const sessions = await Promise.race([
       waha.checkHealth(),
       new Promise((_, reject) => setTimeout(() => reject(new Error('WAHA_TIMEOUT')), 4000)),
     ]);
-    res.json({ waha: 'ONLINE', webhook: webhookSeenAt ? 'RECEIVING' : 'UNKNOWN', lastWebhookAt: webhookSeenAt, sessions: Array.isArray(sessions) ? sessions.length : undefined });
+    res.json({ ...base, waha: 'ONLINE', sessions: Array.isArray(sessions) ? sessions.length : undefined });
   } catch (error) {
-    res.status(503).json({ waha: 'OFFLINE', webhook: 'DEGRADED', lastWebhookAt: webhookSeenAt, message: 'Integrasi WhatsApp sedang bermasalah. Periksa WAHA dan konfigurasi webhook.' });
+    res.status(503).json({ ...base, waha: 'OFFLINE', message: 'Integrasi WhatsApp sedang bermasalah. Periksa WAHA dan konfigurasi webhook.' });
   }
+});
+
+api.post('/admin/integrations/llm-check', auth, async (_req, res) => {
+  await refreshLLMHealth();
+  res.json({ llm: llm.healthy ? 'ONLINE' : 'OFFLINE', checkedAt: llmHealthCheckedAt });
 });
 
 // Admin WhatsApp Routes
@@ -577,7 +518,12 @@ api.post('/admin/whatsapp/conversations/:id/messages', auth, validate(z.object({
 api.patch('/admin/whatsapp/conversations/:id/state', auth, validate(z.object({ state: z.enum(['AI_ACTIVE', 'WAITING_ADMIN', 'ADMIN_ACTIVE']) })), (req, res) => {
   const { state } = req.body;
   const pausedUntil = state === 'AI_ACTIVE' ? null : pauseUntil();
-  const result = db.prepare('UPDATE whatsapp_conversations SET state=?, paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run(state, pausedUntil, req.params.id);
+  let result;
+  if (state === 'AI_ACTIVE') {
+    result = db.prepare("UPDATE whatsapp_conversations SET state=?, paused_until=NULL, bot_state='IDLE', draft_order_json=NULL, fail_count=0, handoff=0, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(state, req.params.id);
+  } else {
+    result = db.prepare('UPDATE whatsapp_conversations SET state=?, paused_until=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run(state, pausedUntil, req.params.id);
+  }
   if (!result.changes) return res.sendStatus(404);
 
   io.to('admins').emit('whatsapp:conversation-updated', { conversationId: req.params.id, state });

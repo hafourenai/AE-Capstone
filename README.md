@@ -12,7 +12,7 @@ Monorepo mandiri untuk customer web chat dan pengelolaan order/keluhan admin.
 
 Pada build terbaru, akses customer berada di `/` dan dashboard admin berada di `/admin` atau hostname admin terpisah. Dashboard menyediakan ikhtisar, status integrasi, pengelolaan order/keluhan, state handoff, dan bubble chat WhatsApp realtime.
 
-API membuat SQLite di `CUSTOMER_MODULE_DB_PATH`, menjalankan schema migration aman, dan mengisi seed menu/cabang awal. Seed ini hanya fallback pengembangan; ganti adaptor `catalog` di `apps/api/src/index.js` dengan sumber master production sebelum go-live.
+API membuat SQLite di `CUSTOMER_MODULE_DB_PATH`, menjalankan schema migration aman, dan mengisi seed menu/cabang awal. Seed ini hanya fallback pengembangan. Menu production adalah tabel `menus` + `menu_aliases` di SQLite dan diedit dari tab **Pengaturan** dashboard; CSV hanya untuk import manual.
 
 ## Production
 
@@ -21,6 +21,25 @@ API membuat SQLite di `CUSTOMER_MODULE_DB_PATH`, menjalankan schema migration am
 - Set `CORS_ORIGINS` ke domain Vercel resmi dan gunakan HTTPS reverse proxy.
 - Backup SQLite: gunakan `.backup` SQLite atau `VACUUM INTO` secara terjadwal ke storage berbeda; jangan menyalin file aktif pada mode WAL secara langsung.
 
-Menu production dibaca dari published CSV melalui `MENU_CSV_URL`, disimpan dalam cache singkat, lalu disinkronkan ke SQLite untuk validasi backend. Item nonaktif atau tanpa stok tidak dapat dipesan. Deployment VPS menggunakan `ops/deploy-vps.sh`, yang melakukan backup, instalasi dependency native, test, restart service, dan health check secara berurutan.
+Menu production disimpan di SQLite melalui dashboard. `MENU_CSV_URL` hanya dipakai bila import diminta eksplisit (`MENU_CSV_IMPORT_ON_START=true` atau `POST /api/v1/admin/menus/import-csv`), dan import tidak menghapus alias yang sudah diedit admin. Item nonaktif atau tanpa stok tidak dapat dipesan. Deployment VPS menggunakan `ops/deploy-vps.sh`, yang melakukan backup, instalasi dependency native, test, restart service, dan health check secara berurutan.
+
+## Bot WhatsApp
+
+Pipeline pesan: **rules → fuzzy menu → LLM (ekstraksi JSON) → tanya balik/handoff**. LLM tidak pernah menulis balasan pelanggan dan tidak menerima seluruh daftar menu; prompt hanya berisi 3–5 kandidat hasil fuzzy.
+
+- Normalisasi tunggal `apps/api/src/normalize.js` dipakai untuk semua pencocokan. Data yang disimpan/ditampilkan tetap teks asli.
+- Webhook WAHA membalas `200` segera, lalu memproses lewat debounce 4 detik per nomor dan antrian global concurrency 1.
+- Timeout LLM 25 detik. Bila LLM mati/timeout atau dua kali tidak paham, percakapan masuk mode handoff (`WAITING_ADMIN`) dan bot berhenti sampai admin mengaktifkan kembali.
+- Media (gambar/dokumen/voice note) di-handoff ke staf, tidak dibuang diam-diam.
+- Log pesan tersimpan di `wa_message_logs`; pesan gagal muncul di tab Pengaturan untuk dijadikan alias menu atau dikirim ke test set.
+
+Jalankan test dan evaluasi:
+
+```bash
+npm --workspace @sambal-joelid/api test
+cd apps/api
+node test/eval/run.js                  # rules + fuzzy, tanpa LLM
+node test/eval/run.js --live           # butuh llama-server; target akurasi >=85%
+```
 
 Deployment artifacts tersedia dalam `ops/`: systemd API, systemd timer backup, Nginx proxy untuk `api.joelid.hontalk.my.id`, dan skrip backup yang aman untuk SQLite WAL. Frontend production menggunakan `https://joelid.hontalk.my.id`. Salin `.env.vps.example` ke `.env` hanya pada VPS. Konfigurasi ini tidak berlaku untuk Termux; lihat komentar `TERMUX NOTE` pada file tersebut.

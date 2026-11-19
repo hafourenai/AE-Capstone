@@ -1,0 +1,32 @@
+{"pesan":"menu apa aja","intent":"tanya_menu","items":[]}
+{"pesan":"daftar menu dong","intent":"tanya_menu","items":[]}
+{"pesan":"ada menu apa","intent":"tanya_menu","items":[]}
+{"pesan":"berapa harganya","intent":"tanya_menu","items":[]}
+{"pesan":"buka jam berapa","intent":"tanya_jam","items":[]}
+{"pesan":"jam tutupnya kapan","intent":"tanya_jam","items":[]}
+{"pesan":"kapan buka","intent":"tanya_jam","items":[]}
+{"pesan":"alamatnya dimana","intent":"tanya_lokasi","items":[]}
+{"pesan":"lokasi resto dmn","intent":"tanya_lokasi","items":[]}
+{"pesan":"mau bicara admin","intent":"bicara_admin","items":[]}
+{"pesan":"mau ngobrol sama orang","intent":"bicara_admin","items":[]}
+{"pesan":"gajadi pesan","intent":"batal","items":[]}
+{"pesan":"batal","intent":"batal","items":[]}
+{"pesan":"ya betul","intent":"konfirmasi","items":[]}
+{"pesan":"pesen ayam geprek 2","intent":"pesan","items":[{"menu":"Ayam Geprek","qty":2}]}
+{"pesan":"ayam geprek 1 sama es teh 2","intent":"pesan","items":[{"menu":"Ayam Geprek","qty":1},{"menu":"Es Teh Manis","qty":2}]}
+{"pesan":"lele goreng 1","intent":"pesan","items":[{"menu":"Lele Goreng","qty":1}]}
+{"pesan":"es teh nya 3","intent":"pesan","items":[{"menu":"Es Teh Manis","qty":3}]}
+{"pesan":"nasi gudeg 2","intent":"pesan","items":[{"menu":"Nasi Gudeg","qty":2}]}
+{"pesan":"gdg 2","intent":"pesan","items":[{"menu":"Nasi Gudeg","qty":2}]}
+{"pesan":"geprek 1","intent":"pesan","items":[{"menu":"Ayam Geprek","qty":1}]}
+{"pesan":"saya mau pesan ayam geprek","intent":"pesan","items":[{"menu":"Ayam Geprek","qty":1}]}
+{"pesan":"es jeruk 2","intent":"pesan","items":[{"menu":"Es Jeruk","qty":2}]}
+{"pesan":"tambah es teh 1","intent":"ubah_pesanan","items":[{"menu":"Es Teh Manis","qty":1}]}
+{"pesan":"saya mau komplain nasinya dingin","intent":"keluhan","items":[]}
+{"pesan":"halo","intent":"lainnya","items":[]}
+{"pesan":"assalamualaikum","intent":"lainnya","items":[]}
+{"pesan":"pesen nasi gudeg 3 buat besok jam 12","intent":"pesan","items":[{"menu":"Nasi Gudeg","qty":3}],"waktu":"besok jam 12"}
+{"pesan":"pesen 2 gdg","intent":"pesan","items":[{"menu":"Nasi Gudeg","qty":2}]}
+{"pesan":"es teh 1 aja","intent":"pesan","items":[{"menu":"Es Teh Manis","qty":1}]}
+{"pesan":"mau pesen lele 3","intent":"pesan","items":[{"menu":"Lele Goreng","qty":3}]}
+{"pesan":"terima kasih","intent":"lainnya","items":[]}

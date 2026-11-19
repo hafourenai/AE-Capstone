@@ -1,0 +1,7 @@
+[
+  { "id": "ayam-geprek", "name": "Ayam Geprek", "price": 18000, "stock": 20, "active": true, "aliases": ["geprek", "ayam"] },
+  { "id": "lele-goreng", "name": "Lele Goreng", "price": 16000, "stock": 20, "active": true, "aliases": ["lele"] },
+  { "id": "es-teh", "name": "Es Teh Manis", "price": 5000, "stock": 30, "active": true, "aliases": ["teh", "es teh"] },
+  { "id": "nasi-gudeg", "name": "Nasi Gudeg", "price": 15000, "stock": 20, "active": true, "aliases": ["gdg", "gudeg"] },
+  { "id": "es-jeruk", "name": "Es Jeruk", "price": 7000, "stock": 30, "active": true, "aliases": ["jeruk", "es jeruk"] }
+]

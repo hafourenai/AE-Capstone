@@ -1,0 +1,72 @@
+[
+  {
+    "pesan": "pak pesen gdg 2 sm tehnya 1 bsk jam 12",
+    "kandidat": ["Nasi Gudeg", "Es Teh Manis"],
+    "output": { "intent": "pesan", "items": [{ "menu": "Nasi Gudeg", "qty": 2 }, { "menu": "Es Teh Manis", "qty": 1 }], "waktu": "besok 12:00", "keluhan": "" }
+  },
+  {
+    "pesan": "MAU NASI GUDEG 3",
+    "kandidat": ["Nasi Gudeg", "Es Teh Manis"],
+    "output": { "intent": "pesan", "items": [{ "menu": "Nasi Gudeg", "qty": 3 }], "waktu": "", "keluhan": "" }
+  },
+  {
+    "pesan": "es teh nya 2 aja bu",
+    "kandidat": ["Es Teh Manis", "Es Jeruk"],
+    "output": { "intent": "pesan", "items": [{ "menu": "Es Teh Manis", "qty": 2 }], "waktu": "", "keluhan": "" }
+  },
+  {
+    "pesan": "gdg 2",
+    "kandidat": ["Nasi Gudeg", "Ayam Geprek"],
+    "output": { "intent": "pesan", "items": [{ "menu": "Nasi Gudeg", "qty": 2 }], "waktu": "", "keluhan": "" }
+  },
+  {
+    "pesan": "pesen ayam geprek 1 sama nasi putih 2",
+    "kandidat": ["Ayam Geprek", "Nasi Putih", "Es Teh Manis"],
+    "output": { "intent": "pesan", "items": [{ "menu": "Ayam Geprek", "qty": 1 }, { "menu": "Nasi Putih", "qty": 2 }], "waktu": "", "keluhan": "" }
+  },
+  {
+    "pesan": "tambah es teh 1 ya",
+    "kandidat": ["Es Teh Manis", "Es Jeruk"],
+    "output": { "intent": "ubah_pesanan", "items": [{ "menu": "Es Teh Manis", "qty": 1 }], "waktu": "", "keluhan": "" }
+  },
+  {
+    "pesan": "ya betul kak",
+    "kandidat": ["Nasi Gudeg"],
+    "output": { "intent": "konfirmasi", "items": [], "waktu": "", "keluhan": "" }
+  },
+  {
+    "pesan": "gajadi pesen",
+    "kandidat": [],
+    "output": { "intent": "batal", "items": [], "waktu": "", "keluhan": "" }
+  },
+  {
+    "pesan": "menu apa aja",
+    "kandidat": [],
+    "output": { "intent": "tanya_menu", "items": [], "waktu": "", "keluhan": "" }
+  },
+  {
+    "pesan": "buka jam brp",
+    "kandidat": [],
+    "output": { "intent": "tanya_jam", "items": [], "waktu": "", "keluhan": "" }
+  },
+  {
+    "pesan": "alamatnya dmn ya",
+    "kandidat": [],
+    "output": { "intent": "tanya_lokasi", "items": [], "waktu": "", "keluhan": "" }
+  },
+  {
+    "pesan": "mau ngobrol sama orang",
+    "kandidat": [],
+    "output": { "intent": "bicara_admin", "items": [], "waktu": "", "keluhan": "" }
+  },
+  {
+    "pesan": "saya mau komplen nasinya dingin",
+    "kandidat": [],
+    "output": { "intent": "keluhan", "items": [], "waktu": "", "keluhan": "nasinya dingin" }
+  },
+  {
+    "pesan": "halo",
+    "kandidat": [],
+    "output": { "intent": "lainnya", "items": [], "waktu": "", "keluhan": "" }
+  }
+]

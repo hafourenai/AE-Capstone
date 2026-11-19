@@ -412,3 +412,28 @@ main:has(.customer-page) { max-width: none; padding: 0; }
   .customer-success h2 { font-size: 1.4rem; }
   .customer-success strong { font-size: 1rem; }
 }
+
+/* Admin: katalog & pengaturan bot */
+.settings-stack { display: grid; gap: 18px; }
+.settings-panel { overflow: visible; }
+.settings-rows { display: grid; }
+.settings-row { display: grid; gap: 10px; padding: 16px 24px; border-bottom: 1px solid #eeebe9; }
+.settings-row:last-child { border-bottom: 0; }
+.settings-row-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.settings-row-head b { font-size: .8rem; }
+.settings-row-head small { color: #8b8480; font-size: .62rem; }
+.settings-row-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.settings-row label, .settings-form label { display: grid; gap: 5px; font-size: .63rem; text-transform: uppercase; letter-spacing: .06em; color: #6d665f; }
+.settings-row input, .settings-form input, .settings-row textarea, .settings-form textarea { padding: 8px 10px; border: 1px solid #cfc7bc; border-radius: 6px; font-size: .74rem; text-transform: none; letter-spacing: 0; background: #fff; color: #17301f; }
+.settings-row input:focus, .settings-form input:focus, .settings-row textarea:focus, .settings-form textarea:focus { border-color: #087437; outline: none; }
+.settings-check { display: flex !important; align-items: center; gap: 8px; text-transform: none; letter-spacing: 0; }
+.settings-row button, .settings-form button { justify-self: start; padding: 8px 16px; border: 0; border-radius: 6px; background: #087437; color: #fff; font-size: .72rem; font-weight: 500; }
+.settings-row button:disabled, .settings-form button:disabled { opacity: .6; }
+.settings-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; padding: 18px 24px 24px; }
+.settings-form button { grid-column: 1 / -1; }
+.settings-notice { padding: 10px 14px; border-radius: 8px; background: #edf9f0; color: #185e30; font-size: .72rem; }
+@media (max-width: 720px) { .settings-row-fields, .settings-form { grid-template-columns: 1fr; } }
+
+.settings-row select { padding: 8px 10px; border: 1px solid #cfc7bc; border-radius: 6px; font-size: .74rem; background: #fff; color: #17301f; }
+.settings-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.settings-actions .ghost { background: #fff; color: #17301f; border: 1px solid #cfc7bc; }

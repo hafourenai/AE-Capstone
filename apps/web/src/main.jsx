@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { io } from 'socket.io-client';
-import { ArrowUpDown, Filter, Headphones, LayoutDashboard, MessageCircle, RotateCcw, Send, ShoppingCart, Wifi, X } from 'lucide-react';
+import { ArrowUpDown, Filter, Headphones, LayoutDashboard, MessageCircle, RotateCcw, Send, Settings, ShoppingCart, Wifi, X } from 'lucide-react';
 import './style.css';
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api/v1';
@@ -369,6 +369,253 @@ function SourceBadge({ source }) {
   );
 }
 
+// ─────────────────────── Admin: katalog & pengaturan ────────────────────────
+
+function CatalogSettings({ token, onError }) {
+  const [menus, setMenus] = useState([]);
+  const [drafts, setDrafts] = useState({});
+  const [settings, setSettings] = useState({ opening_hours: '', address: '', phone: '', business_name: '' });
+  const [templates, setTemplates] = useState({});
+  const [failed, setFailed] = useState([]);
+  const [aliasChoice, setAliasChoice] = useState({});
+  const [newMenu, setNewMenu] = useState({ id: '', name: '', price: '', stock: '' });
+  const [notice, setNotice] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [menuList, settingMap, templateMap, failedList] = await Promise.all([
+        request('/admin/menus', { headers: { Authorization: `Bearer ${token}` } }),
+        request('/admin/settings', { headers: { Authorization: `Bearer ${token}` } }),
+        request('/admin/templates', { headers: { Authorization: `Bearer ${token}` } }),
+        request('/admin/failed-messages', { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      setMenus(menuList);
+      setSettings(prev => ({ ...prev, ...settingMap }));
+      setTemplates(templateMap);
+      setFailed(failedList);
+      setDrafts(Object.fromEntries(menuList.map(menu => [menu.id, {
+        price: menu.price,
+        stock: menu.stock,
+        active: menu.active,
+        aliases: (menu.aliases || []).join(', '),
+      }])));
+    } catch (error) { onError(error.message); }
+  }, [token]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const flash = (message) => { setNotice(message); setTimeout(() => setNotice(''), 2500); };
+
+  const patchDraft = (id, field, value) => setDrafts(prev => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
+
+  const saveMenu = async (menu) => {
+    const draft = drafts[menu.id] || {};
+    try {
+      setSaving(true);
+      await request(`/admin/menus/${menu.id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ price: Number(draft.price), stock: Number(draft.stock), active: Boolean(draft.active) }),
+      });
+      await request(`/admin/menus/${menu.id}/aliases`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ aliases: String(draft.aliases || '').split(',').map(a => a.trim()).filter(Boolean) }),
+      });
+      await load();
+      flash(`Menu ${menu.name} disimpan.`);
+    } catch (error) { onError(error.message); } finally { setSaving(false); }
+  };
+
+  const createMenu = async (event) => {
+    event.preventDefault();
+    try {
+      setSaving(true);
+      await request('/admin/menus', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          id: newMenu.id.trim(), name: newMenu.name.trim(), price: Number(newMenu.price),
+          stock: newMenu.stock === '' ? 999 : Number(newMenu.stock),
+        }),
+      });
+      setNewMenu({ id: '', name: '', price: '', stock: '' });
+      await load();
+      flash('Menu baru ditambahkan.');
+    } catch (error) { onError(error.message); } finally { setSaving(false); }
+  };
+
+  const saveSettings = async (event) => {
+    event.preventDefault();
+    try {
+      setSaving(true);
+      await request('/admin/settings', {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify(settings),
+      });
+      flash('Jam buka & lokasi disimpan.');
+    } catch (error) { onError(error.message); } finally { setSaving(false); }
+  };
+
+  const saveTemplate = async (key, content) => {
+    try {
+      setSaving(true);
+      await request(`/admin/templates/${key}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ content }),
+      });
+      flash(`Template ${key} disimpan.`);
+    } catch (error) { onError(error.message); } finally { setSaving(false); }
+  };
+
+  const addAliasFromFailed = async (item) => {
+    const menuId = aliasChoice[item.id];
+    if (!menuId) { onError('Pilih menu tujuan alias terlebih dahulu.'); return; }
+    try {
+      setSaving(true);
+      await request(`/admin/failed-messages/${item.id}/alias`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ menuId }),
+      });
+      await load();
+      flash('Alias ditambahkan dan pesan ditandai selesai.');
+    } catch (error) { onError(error.message); } finally { setSaving(false); }
+  };
+
+  const sendToTestSet = async (item) => {
+    try {
+      setSaving(true);
+      await request(`/admin/failed-messages/${item.id}/testset`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      await load();
+      flash('Pesan ditambahkan ke test set.');
+    } catch (error) { onError(error.message); } finally { setSaving(false); }
+  };
+
+  const resolveFailed = async (item) => {
+    try {
+      setSaving(true);
+      await request(`/admin/failed-messages/${item.id}/resolve`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      await load();
+    } catch (error) { onError(error.message); } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="settings-stack">
+      {notice && <p className="settings-notice">{notice}</p>}
+
+      <section className="data-panel settings-panel">
+        <div className="panel-heading">
+          <div><p className="eyebrow">KATALOG</p><h2>Menu &amp; Alias</h2></div>
+          <span className="panel-count">{menus.length} menu</span>
+        </div>
+        <div className="settings-rows">
+          {menus.map(menu => {
+            const draft = drafts[menu.id] || {};
+            return (
+              <div className="settings-row" key={menu.id}>
+                <div className="settings-row-head"><b>{menu.name}</b><small>{menu.id}</small></div>
+                <div className="settings-row-fields">
+                  <label>Harga<input type="number" min="0" value={draft.price ?? ''} onChange={e => patchDraft(menu.id, 'price', e.target.value)} /></label>
+                  <label>Stok<input type="number" min="0" value={draft.stock ?? ''} onChange={e => patchDraft(menu.id, 'stock', e.target.value)} /></label>
+                  <label className="settings-check">
+                    <input type="checkbox" checked={Boolean(draft.active)} onChange={e => patchDraft(menu.id, 'active', e.target.checked)} /> Aktif
+                  </label>
+                </div>
+                <label>Alias (pisahkan koma)<input value={draft.aliases ?? ''} onChange={e => patchDraft(menu.id, 'aliases', e.target.value)} placeholder="gdg, gudeg" /></label>
+                <button type="button" onClick={() => saveMenu(menu)} disabled={saving}>Simpan menu</button>
+              </div>
+            );
+          })}
+          {!menus.length && <p className="field-help">Belum ada menu. Tambahkan menu pertama di bawah.</p>}
+        </div>
+      </section>
+
+      <section className="data-panel settings-panel">
+        <div className="panel-heading">
+          <div><p className="eyebrow">KATALOG</p><h2>Tambah menu</h2></div>
+        </div>
+        <form className="settings-form" onSubmit={createMenu}>
+          <label>ID<input value={newMenu.id} onChange={e => setNewMenu({ ...newMenu, id: e.target.value })} placeholder="nasi-gudeg" required /></label>
+          <label>Nama<input value={newMenu.name} onChange={e => setNewMenu({ ...newMenu, name: e.target.value })} placeholder="Nasi Gudeg" required /></label>
+          <label>Harga<input type="number" min="0" value={newMenu.price} onChange={e => setNewMenu({ ...newMenu, price: e.target.value })} required /></label>
+          <label>Stok<input type="number" min="0" value={newMenu.stock} onChange={e => setNewMenu({ ...newMenu, stock: e.target.value })} placeholder="999" /></label>
+          <button disabled={saving}>Tambah menu</button>
+        </form>
+      </section>
+
+      <section className="data-panel settings-panel">
+        <div className="panel-heading">
+          <div><p className="eyebrow">INFORMASI</p><h2>Jam buka &amp; lokasi</h2></div>
+        </div>
+        <form className="settings-form" onSubmit={saveSettings}>
+          <label>Nama usaha<input value={settings.business_name || ''} onChange={e => setSettings({ ...settings, business_name: e.target.value })} /></label>
+          <label>Jam buka<input value={settings.opening_hours || ''} onChange={e => setSettings({ ...settings, opening_hours: e.target.value })} placeholder="Setiap hari 09.00–21.00" /></label>
+          <label>Alamat<input value={settings.address || ''} onChange={e => setSettings({ ...settings, address: e.target.value })} placeholder="Jl. ..." /></label>
+          <label>Telepon<input value={settings.phone || ''} onChange={e => setSettings({ ...settings, phone: e.target.value })} /></label>
+          <button disabled={saving}>Simpan informasi</button>
+        </form>
+      </section>
+
+      <section className="data-panel settings-panel">
+        <div className="panel-heading">
+          <div><p className="eyebrow">EVALUASI</p><h2>Pesan gagal dipahami</h2></div>
+          <span className="panel-count">{failed.length} pesan</span>
+        </div>
+        <div className="settings-rows">
+          {failed.map(item => (
+            <div className="settings-row" key={item.id}>
+              <div className="settings-row-head">
+                <b>“{item.raw}”</b>
+                <small>{formatDateTime(item.created_at)} · {item.phone || '-'} · {item.reason}</small>
+              </div>
+              <div className="settings-row-fields">
+                <label>Jadikan alias menu
+                  <select value={aliasChoice[item.id] || ''} onChange={e => setAliasChoice(prev => ({ ...prev, [item.id]: e.target.value }))}>
+                    <option value="">Pilih menu…</option>
+                    {menus.map(menu => <option key={menu.id} value={menu.id}>{menu.name}</option>)}
+                  </select>
+                </label>
+                <div className="settings-actions">
+                  <button type="button" onClick={() => addAliasFromFailed(item)} disabled={saving}>Tambah alias</button>
+                  <button type="button" onClick={() => sendToTestSet(item)} disabled={saving}>Ke test set</button>
+                  <button type="button" className="ghost" onClick={() => resolveFailed(item)} disabled={saving}>Tandai selesai</button>
+                </div>
+              </div>
+            </div>
+          ))}
+          {!failed.length && <p className="field-help">Belum ada pesan yang gagal dipahami. Bagus!</p>}
+        </div>
+      </section>
+
+      <section className="data-panel settings-panel">
+        <div className="panel-heading">
+          <div><p className="eyebrow">BOT</p><h2>Template pesan</h2></div>
+          <span className="panel-count">{Object.keys(templates).length} template</span>
+        </div>
+        <div className="settings-rows">
+          {Object.entries(templates).map(([key, content]) => (
+            <div className="settings-row" key={key}>
+              <div className="settings-row-head"><b>{key}</b></div>
+              <label>Isi template<textarea defaultValue={content} onBlur={e => saveTemplate(key, e.target.value)} /></label>
+            </div>
+          ))}
+          {!Object.keys(templates).length && <p className="field-help">Template akan muncul di sini setelah diinisialisasi backend.</p>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function Admin() {
   const [token, setToken] = useState(localStorage.token || '');
   const [kind, setKind] = useState('dashboard');
@@ -393,6 +640,7 @@ function Admin() {
 
   const load = useCallback(() => {
     if (!token) return;
+    if (kind === 'settings') return;
     if (kind === 'dashboard') {
       Promise.all([
         request('/admin/orders', { headers: { Authorization: `Bearer ${token}` } }),
@@ -557,7 +805,7 @@ function Admin() {
   }, [data, kind, filterStatus, filterBranch, filterDatePreset, startDate, endDate, sortOrder]);
 
   const hasActiveFilters = filterStatus !== 'ALL' || filterBranch !== 'ALL' || filterDatePreset !== 'ALL' || startDate || endDate || sortOrder !== 'ASC';
-  const title = kind === 'dashboard' ? 'Ikhtisar' : kind === 'orders' ? 'Pesanan' : kind === 'complaints' ? 'Keluhan' : 'Percakapan WhatsApp';
+  const title = kind === 'dashboard' ? 'Ikhtisar' : kind === 'orders' ? 'Pesanan' : kind === 'complaints' ? 'Keluhan' : kind === 'settings' ? 'Pengaturan Bot' : 'Percakapan WhatsApp';
   const newCount = data.filter(item => ['NEW', 'WAITING_ADMIN'].includes(item.status || item.state)).length;
   const activeCount = data.filter(item => ['CONFIRMED', 'PROCESSING', 'IN_REVIEW', 'IN_PROGRESS', 'ADMIN_ACTIVE'].includes(item.status || item.state)).length;
 
@@ -582,6 +830,9 @@ function Admin() {
           <button className={kind === 'whatsapp' ? 'active' : ''} onClick={() => switchKind('whatsapp')}>
             <MessageCircle /> WhatsApp <i>{kind === 'whatsapp' ? data.length : ''}</i>
           </button>
+          <button className={kind === 'settings' ? 'active' : ''} onClick={() => switchKind('settings')}>
+            <Settings /> Pengaturan
+          </button>
         </nav>
         <div className="sidebar-foot">
           <span className="online-dot" /> Sistem online
@@ -603,7 +854,7 @@ function Admin() {
           </div>
         </header>
 
-        {kind === 'dashboard' ? (
+        {kind === 'settings' ? null : kind === 'dashboard' ? (
           <>
             <div className="metric-grid overview-metrics">
               <article>
@@ -625,11 +876,17 @@ function Admin() {
                 <span>{overview.whatsapp.filter(x => x.state === 'WAITING_ADMIN').length} menunggu admin</span>
               </article>
             </div>
-            <div className={`integration-status ${health?.waha === 'ONLINE' ? 'healthy' : 'degraded'}`}>
+            <div className={`integration-status ${health?.waha === 'ONLINE' && !health?.degraded ? 'healthy' : 'degraded'}`}>
               <Wifi />
               <div>
-                <b>Integrasi WhatsApp: {health?.waha || 'Memeriksa...'}</b>
-                <span>{health?.waha === 'ONLINE' ? 'WAHA dapat diakses. Pesan masuk dipantau secara real-time.' : health?.message || 'Status sedang diperiksa.'}</span>
+                <b>Integrasi WhatsApp: {health?.waha || 'Memeriksa...'} · LLM: {health?.llm || 'Memeriksa...'}</b>
+                <span>
+                  {health?.degraded
+                    ? 'Mode degradasi: LLM offline. Bot hanya memakai aturan dan pencocokan menu, lalu handoff bila perlu.'
+                    : health?.waha === 'ONLINE'
+                      ? 'WAHA dapat diakses. Pesan masuk dipantau secara real-time.'
+                      : health?.message || 'Status sedang diperiksa.'}
+                </span>
               </div>
             </div>
           </>
@@ -643,7 +900,9 @@ function Admin() {
 
         {error && <p className="error">{error}</p>}
 
-        {kind !== 'dashboard' && (
+        {kind === 'settings' && <CatalogSettings token={token} onError={setError} />}
+
+        {kind !== 'dashboard' && kind !== 'settings' && (
           <div className={`admin-panel ${(detail || chatConv) ? 'has-detail' : ''}`}>
             {/* Daftar */}
             <section className="data-panel">

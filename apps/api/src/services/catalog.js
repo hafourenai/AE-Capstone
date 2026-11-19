@@ -1,3 +1,5 @@
+import { normalize } from '../normalize.js';
+
 const DEFAULT_TTL_MS = 60_000;
 
 function parseCsv(text) {
@@ -29,50 +31,140 @@ export function normalizeCatalogCsv(text) {
     stock: Number(row.stok),
     active: /^(true|1|ya)$/i.test(row.aktif),
     description: row.deskripsi,
-    aliases: row.alias.split('|').map(value => value.trim()).filter(Boolean),
+    aliases: String(row.alias || '').split('|').map(value => value.trim()).filter(Boolean),
   })).filter(item => item.id && item.name && Number.isFinite(item.price) && Number.isFinite(item.stock));
 }
 
+/**
+ * Katalog menu.
+ *
+ * Sumber kebenaran adalah tabel `menus` + `menu_aliases` di SQLite (DECISIONS.md D1).
+ * CSV hanya diimpor bila diminta eksplisit; tidak menimpa edit dashboard setiap request.
+ */
 export class CatalogService {
-  constructor({ url, ttlMs = DEFAULT_TTL_MS, db }) {
+  constructor({ url, ttlMs = DEFAULT_TTL_MS, db, importOnStart = false }) {
     this.url = url;
     this.ttlMs = ttlMs;
     this.db = db;
-    this.cache = null;
-    this.expiresAt = 0;
+    this.importOnStart = importOnStart;
+    this.lastImportAt = null;
   }
 
-  async getMenus() {
-    if (!this.url) return this.localMenus();
-    if (this.cache && Date.now() < this.expiresAt) return this.cache;
-    try {
-      const response = await fetch(this.url, { signal: AbortSignal.timeout(10_000) });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const menus = normalizeCatalogCsv(await response.text());
-      if (!menus.length) throw new Error('CSV tidak berisi menu valid');
-      this.cache = menus;
-      this.expiresAt = Date.now() + this.ttlMs;
-      this.syncLocalCatalog(menus);
-      return menus;
-    } catch (error) {
-      console.error(`[CATALOG] Google Sheets gagal dimuat, memakai cache lokal: ${error.message}`);
-      return this.cache || this.localMenus();
+  async init() {
+    if (this.importOnStart && this.url) {
+      try { await this.importFromUrl(); }
+      catch (error) { console.error(`[CATALOG] Import CSV saat start gagal: ${error.message}`); }
     }
   }
 
-  localMenus() {
-    return this.db.prepare('SELECT id, name, price, 999 AS stock, active, description, aliases FROM menus').all()
-      .map(item => ({ ...item, active: Boolean(item.active), aliases: item.aliases ? JSON.parse(item.aliases) : [] }));
+  async getMenus() {
+    return this.localMenus();
   }
 
+  localMenus() {
+    const aliases = (menuId) => this.db.prepare('SELECT alias_raw FROM menu_aliases WHERE menu_id = ? ORDER BY alias_raw').all(menuId);
+    return this.db.prepare('SELECT id, name, price, stock, active, description FROM menus ORDER BY name').all()
+      .map(item => ({
+        ...item,
+        active: Boolean(item.active),
+        aliases: aliases(item.id).map(row => row.alias_raw),
+      }));
+  }
+
+  async importFromUrl() {
+    if (!this.url) throw new Error('MENU_CSV_URL belum diatur');
+    const response = await fetch(this.url, { signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const menus = normalizeCatalogCsv(await response.text());
+    if (!menus.length) throw new Error('CSV tidak berisi menu valid');
+    this.syncLocalCatalog(menus);
+    this.lastImportAt = new Date().toISOString();
+    return menus.length;
+  }
+
+  /** Upsert hasil import. Alias yang sudah diedit admin tidak dihapus. */
   syncLocalCatalog(menus) {
     const save = this.db.prepare(`INSERT INTO menus(id,name,price,active,stock,description,aliases)
       VALUES (@id,@name,@price,@active,@stock,@description,@aliases)
       ON CONFLICT(id) DO UPDATE SET name=excluded.name,price=excluded.price,active=excluded.active,
-      stock=excluded.stock,description=excluded.description,aliases=excluded.aliases`);
+      stock=excluded.stock,description=excluded.description`);
+    const insertAlias = this.db.prepare('INSERT OR IGNORE INTO menu_aliases(menu_id, alias_norm, alias_raw) VALUES (?, ?, ?)');
     this.db.transaction(items => {
-      this.db.prepare('UPDATE menus SET active=0').run();
-      items.forEach(item => save.run({ ...item, active: item.active ? 1 : 0, aliases: JSON.stringify(item.aliases) }));
+      const keep = new Set(items.map(item => item.id));
+      const existing = this.db.prepare('SELECT id FROM menus').all();
+      items.forEach(item => {
+        save.run({ ...item, active: item.active ? 1 : 0, aliases: JSON.stringify(item.aliases) });
+        for (const alias of item.aliases) {
+          const norm = normalize(alias);
+          if (norm) insertAlias.run(item.id, norm, alias);
+        }
+      });
+      // Menu yang hilang dari CSV dinonaktifkan, bukan dihapus (riwayat order tetap aman).
+      const deactivate = this.db.prepare('UPDATE menus SET active = 0 WHERE id = ?');
+      existing.filter(item => !keep.has(item.id)).forEach(item => deactivate.run(item.id));
     })(menus);
+  }
+
+  createMenu({ id, name, price, stock = 999, active = true, description = '' }) {
+    this.db.prepare('INSERT INTO menus(id,name,price,active,stock,description,aliases) VALUES (?,?,?,?,?,?,?)')
+      .run(id, name, price, active ? 1 : 0, stock, description, '[]');
+    return this.getMenu(id);
+  }
+
+  updateMenu(id, patch) {
+    const current = this.db.prepare('SELECT * FROM menus WHERE id = ?').get(id);
+    if (!current) return null;
+    const next = {
+      name: patch.name ?? current.name,
+      price: patch.price ?? current.price,
+      stock: patch.stock ?? current.stock,
+      active: patch.active === undefined ? current.active : (patch.active ? 1 : 0),
+      description: patch.description ?? current.description,
+    };
+    this.db.prepare('UPDATE menus SET name=?, price=?, stock=?, active=?, description=? WHERE id=?')
+      .run(next.name, next.price, next.stock, next.active, next.description, id);
+    return this.getMenu(id);
+  }
+
+  deleteMenu(id) {
+    return this.db.transaction(() => {
+      this.db.prepare('DELETE FROM menu_aliases WHERE menu_id = ?').run(id);
+      return this.db.prepare('DELETE FROM menus WHERE id = ?').run(id).changes > 0;
+    })();
+  }
+
+  getMenu(id) {
+    const menu = this.db.prepare('SELECT id, name, price, stock, active, description FROM menus WHERE id = ?').get(id);
+    if (!menu) return null;
+    return {
+      ...menu,
+      active: Boolean(menu.active),
+      aliases: this.db.prepare('SELECT alias_raw FROM menu_aliases WHERE menu_id = ? ORDER BY alias_raw').all(id).map(row => row.alias_raw),
+    };
+  }
+
+  /** Ganti seluruh alias sebuah menu. Alias dinormalisasi di server, bukan di browser. */
+  replaceAliases(menuId, aliases = []) {
+    if (!this.db.prepare('SELECT 1 FROM menus WHERE id = ?').get(menuId)) return null;
+    const insert = this.db.prepare('INSERT OR IGNORE INTO menu_aliases(menu_id, alias_norm, alias_raw) VALUES (?, ?, ?)');
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM menu_aliases WHERE menu_id = ?').run(menuId);
+      for (const alias of aliases) {
+        const raw = String(alias ?? '').trim();
+        const norm = normalize(raw);
+        if (raw && norm) insert.run(menuId, norm, raw);
+      }
+    })();
+    return this.getMenu(menuId);
+  }
+
+  /** Tambah satu alias (dipakai tombol "jadikan alias menu" di dashboard). */
+  addAlias(menuId, alias) {
+    const raw = String(alias ?? '').trim();
+    const norm = normalize(raw);
+    if (!raw || !norm) return null;
+    if (!this.db.prepare('SELECT 1 FROM menus WHERE id = ?').get(menuId)) return null;
+    this.db.prepare('INSERT OR IGNORE INTO menu_aliases(menu_id, alias_norm, alias_raw) VALUES (?, ?, ?)').run(menuId, norm, raw);
+    return this.getMenu(menuId);
   }
 }
