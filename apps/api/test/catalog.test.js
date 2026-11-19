@@ -65,3 +65,27 @@ test('catalog: import CSV menonaktifkan menu yang hilang tanpa menghapus', (t) =
   ]);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM menu_aliases WHERE menu_id='baru'").get().count, 1);
 });
+
+test('catalog: sinkron spreadsheet mengubah SQLite dan alias; kegagalan mempertahankan data lama', async (t) => {
+  const db = temporaryDatabase(t);
+  const catalog = new CatalogService({ url: 'https://example.test/menu.csv', db });
+  const originalFetch = globalThis.fetch;
+  let csv = 'kode,nama,harga,stok,aktif,alias\na,Nasi Jeruk,3500,20,TRUE,nj|nasi jr\nb,Lele,7000,12,TRUE,ikan lele';
+  globalThis.fetch = async () => ({ ok: true, text: async () => csv });
+  t.after(() => { globalThis.fetch = originalFetch; });
+  assert.equal((await catalog.sync()).changed, true);
+  assert.equal(catalog.getStatus().itemCount, 2);
+
+  csv = 'kode,nama,harga,stok,aktif,alias\na,Nasi Jeruk,4000,20,TRUE,jeruk rice\nb,Lele,7000,12,TRUE,ikan lele\nc,Usus,3500,50,TRUE,usus';
+  assert.equal((await catalog.sync()).changed, true);
+  assert.equal(db.prepare("SELECT price FROM menus WHERE id='a'").get().price, 4000);
+  assert.deepEqual(db.prepare("SELECT alias_raw FROM menu_aliases WHERE menu_id='a'").all(), [{ alias_raw: 'jeruk rice' }]);
+
+  csv = 'kode,nama,harga,stok,aktif,alias\na,Nasi Jeruk,abc,20,TRUE,jeruk';
+  assert.equal((await catalog.sync()).changed, false);
+  assert.match(catalog.getStatus().lastError, /Baris 2/);
+  assert.equal(db.prepare("SELECT price FROM menus WHERE id='a'").get().price, 4000);
+  csv = 'kode,nama,harga,stok,aktif,alias\na,Nasi Jeruk,4000,20,TRUE,jeruk';
+  assert.equal((await catalog.sync()).changed, false);
+  assert.match(catalog.getStatus().lastError, /turun/);
+});

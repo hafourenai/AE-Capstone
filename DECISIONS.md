@@ -5,12 +5,15 @@ Format: tanggal, keputusan, alasan singkat.
 
 ## 2026-11-19
 
-### D1. DB adalah master menu; Google Sheets hanya import manual
-Tabel `menus` + `menu_aliases` di SQLite menjadi sumber kebenaran. `MENU_CSV_URL`
-tidak lagi menimpa katalog saat startup/setiap request. Import CSV hanya berjalan
-bila diminta eksplisit (env `MENU_CSV_IMPORT_ON_START=true` atau endpoint admin).
-Alasan: spec §2.8 mewajibkan menu/alias editable dari dashboard, sedangkan
-sinkronisasi CSV sebelumnya meng-deactivate lalu menimpa semua edit admin.
+### D1. Menu berasal dari Google Sheets (revisi keputusan)
+Sesuai permintaan pemilik pada 19 November 2026, `MENU_CSV_URL` adalah sumber
+utama menu. SQLite menyimpan salinan terakhir yang valid untuk bot, checkout, dan
+web pelanggan. Impor saat startup dan tiap `MENU_SYNC_INTERVAL_MS` (default 5
+menit), serta tombol sinkron manual di dashboard. Kegagalan CSV atau penurunan
+jumlah item > `MENU_SYNC_MAX_DROP` (default 50%) mempertahankan SQLite lama.
+Dashboard menampilkan menu tanpa mengizinkan edit; jam buka, lokasi, dan template
+tetap editable. Endpoint edit menu lama dihapus agar tidak membuat dua sumber
+kebenaran. Spreadsheet hanya dibaca, tidak ditulis bot.
 
 ### D2. Intent `keluhan` ditambahkan
 Enum intent LLM mengikuti spec §8.3 ditambah `keluhan` agar alur keluhan yang

@@ -46,8 +46,7 @@ const env = {
   whatsappRetentionDays: Number(process.env.WHATSAPP_MESSAGE_RETENTION_DAYS || 30),
   adminPauseSeconds: Number(process.env.WHATSAPP_ADMIN_PAUSE_SECONDS || 180),
   catalogUrl: process.env.MENU_CSV_URL || '',
-  catalogTtlMs: Number(process.env.MENU_CACHE_SECONDS || 60) * 1000,
-  catalogImportOnStart: process.env.MENU_CSV_IMPORT_ON_START === 'true',
+  catalogTtlMs: Number(process.env.MENU_SYNC_INTERVAL_MS || 300000),
   bankName: process.env.PAYMENT_BANK_NAME || '',
   bankAccount: process.env.PAYMENT_BANK_ACCOUNT || '',
   bankHolder: process.env.PAYMENT_BANK_HOLDER || '',
@@ -64,7 +63,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: env.origins, methods: ['GET', 'POST'] } });
 const bridge = new OrderComplaintBridge(db, waha, io);
-const catalog = new CatalogService({ url: env.catalogUrl, ttlMs: env.catalogTtlMs, db, importOnStart: env.catalogImportOnStart });
+const catalog = new CatalogService({ url: env.catalogUrl, ttlMs: env.catalogTtlMs, db, maxDrop: Number(process.env.MENU_SYNC_MAX_DROP || 0.5) });
 const menuMatcher = new MenuMatcher({ getMenus: () => catalog.getMenus() });
 const templates = new TemplateStore(db);
 const stateStore = new StateStore(db);
@@ -85,7 +84,8 @@ const bot = new BotHandler({
   state: stateStore,
   logger: console,
 });
-catalog.init().catch((error) => console.error('[CATALOG] Init gagal:', error.message));
+catalog.init().then(result => { if (result?.changed) menuMatcher.invalidate(); });
+setInterval(async () => { const result = await catalog.sync(); if (result.changed) menuMatcher.invalidate(); }, env.catalogTtlMs).unref();
 const messageRateBuckets = new Map();
 let lastWebhookAt = null;
 
@@ -205,16 +205,6 @@ api.get('/public/info', (_, res) => {
 });
 
 // ── Admin: menu, alias, jam/lokasi, template ─────────────────────────────────
-const menuInput = z.object({
-  id: z.string().trim().regex(/^[a-z0-9-]{2,60}$/, 'ID menu hanya huruf kecil, angka, dan tanda hubung'),
-  name: z.string().trim().min(2).max(100),
-  price: z.number().int().min(0).max(100_000_000),
-  stock: z.number().int().min(0).max(999_999).optional(),
-  active: z.boolean().optional(),
-  description: z.string().trim().max(500).optional(),
-});
-const menuPatch = menuInput.omit({ id: true }).partial();
-const aliasInput = z.object({ aliases: z.array(z.string().trim().min(1).max(80)).max(30) });
 const settingsInput = z.object({
   opening_hours: z.string().trim().max(300).optional(),
   address: z.string().trim().max(500).optional(),
@@ -223,54 +213,13 @@ const settingsInput = z.object({
 });
 
 api.get('/admin/menus', auth, async (_, res) => res.json(await catalog.getMenus()));
-
-api.post('/admin/menus', auth, validate(menuInput), (req, res) => {
-  try {
-    const menu = catalog.createMenu(req.body);
-    menuMatcher.invalidate();
-    res.status(201).json(menu);
-  } catch (error) {
-    res.status(422).json({ error: 'MENU_CREATE_FAILED', message: error.message });
-  }
+api.get('/admin/menu-sync-status', auth, (_, res) => res.json(catalog.getStatus()));
+api.post('/admin/menu-sync', auth, async (_, res) => {
+  const result = await catalog.sync();
+  if (result.changed) menuMatcher.invalidate();
+  res.json({ ...result, status: catalog.getStatus() });
 });
 
-api.patch('/admin/menus/:id', auth, validate(menuPatch), (req, res) => {
-  const menu = catalog.updateMenu(req.params.id, req.body);
-  if (!menu) return res.sendStatus(404);
-  menuMatcher.invalidate();
-  res.json(menu);
-});
-
-api.put('/admin/menus/:id/aliases', auth, validate(aliasInput), (req, res) => {
-  const menu = catalog.replaceAliases(req.params.id, req.body.aliases);
-  if (!menu) return res.sendStatus(404);
-  menuMatcher.invalidate();
-  res.json(menu);
-});
-
-api.post('/admin/menus/:id/aliases', auth, validate(z.object({ alias: z.string().trim().min(1).max(80) })), (req, res) => {
-  const menu = catalog.addAlias(req.params.id, req.body.alias);
-  if (!menu) return res.sendStatus(404);
-  menuMatcher.invalidate();
-  res.json(menu);
-});
-
-api.delete('/admin/menus/:id', auth, (req, res) => {
-  const deleted = catalog.deleteMenu(req.params.id);
-  if (!deleted) return res.sendStatus(404);
-  menuMatcher.invalidate();
-  res.sendStatus(204);
-});
-
-api.post('/admin/menus/import-csv', auth, async (_, res) => {
-  try {
-    const count = await catalog.importFromUrl();
-    menuMatcher.invalidate();
-    res.json({ imported: count });
-  } catch (error) {
-    res.status(422).json({ error: 'IMPORT_FAILED', message: error.message });
-  }
-});
 
 api.get('/admin/settings', auth, (_, res) => {
   res.json(Object.fromEntries(rows('SELECT key, value FROM business_settings').map(row => [row.key, row.value])));
@@ -306,15 +255,6 @@ api.patch('/admin/failed-messages/:id/resolve', auth, (req, res) => {
   res.sendStatus(204);
 });
 
-api.post('/admin/failed-messages/:id/alias', auth, validate(z.object({ menuId: z.string().trim().min(1).max(80) })), (req, res) => {
-  const failed = messageLogger.getFailed(req.params.id);
-  if (!failed) return res.sendStatus(404);
-  const menu = catalog.addAlias(req.body.menuId, failed.raw);
-  if (!menu) return res.status(422).json({ error: 'MENU_NOT_FOUND' });
-  menuMatcher.invalidate();
-  messageLogger.resolve(failed.id);
-  res.json({ menu, resolved: true });
-});
 
 api.post('/admin/failed-messages/:id/testset', auth, (req, res) => {
   const failed = messageLogger.getFailed(req.params.id);

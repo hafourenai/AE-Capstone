@@ -35,6 +35,34 @@ export function normalizeCatalogCsv(text) {
   })).filter(item => item.id && item.name && Number.isFinite(item.price) && Number.isFinite(item.stock));
 }
 
+function validateCatalogCsv(text) {
+  const rows = parseCsv(text);
+  if (!rows.length) throw new Error('CSV tidak berisi menu');
+  if (!Object.hasOwn(rows[0], 'nama') || !Object.hasOwn(rows[0], 'harga')) {
+    throw new Error('CSV harus memiliki kolom nama dan harga');
+  }
+  const ids = new Set();
+  const menus = [];
+  for (const [index, row] of rows.entries()) {
+    const id = row.kode || row.id || normalize(row.nama).replace(/\s+/g, '-');
+    const priceText = String(row.harga ?? '').trim().replace(/,\d{1,2}$/, '').replace(/\D/g, '');
+    const price = Number(priceText);
+    const stock = row.stok === undefined || row.stok === '' ? 999 : Number(row.stok);
+    if (!id || !row.nama || !priceText || !Number.isSafeInteger(price) || price <= 0 || !Number.isSafeInteger(stock) || stock < 0) {
+      throw new Error(`Baris ${index + 2}: kode, nama, harga, atau stok tidak valid`);
+    }
+    if (ids.has(id)) throw new Error(`Baris ${index + 2}: kode menu duplikat (${id})`);
+    ids.add(id);
+    menus.push({
+      id, name: row.nama, price, stock,
+      active: !/^(false|0|tidak)$/i.test(row.aktif ?? row.tersedia ?? ''),
+      description: row.deskripsi || '',
+      aliases: String(row.alias || '').split(/[|,]/).map(value => value.trim()).filter(Boolean),
+    });
+  }
+  return menus;
+}
+
 /**
  * Katalog menu.
  *
@@ -42,19 +70,52 @@ export function normalizeCatalogCsv(text) {
  * CSV hanya diimpor bila diminta eksplisit; tidak menimpa edit dashboard setiap request.
  */
 export class CatalogService {
-  constructor({ url, ttlMs = DEFAULT_TTL_MS, db, importOnStart = false }) {
+  constructor({ url, ttlMs = DEFAULT_TTL_MS, db, importOnStart = false, maxDrop = 0.5 }) {
     this.url = url;
     this.ttlMs = ttlMs;
     this.db = db;
     this.importOnStart = importOnStart;
     this.lastImportAt = null;
+    this.lastAttemptAt = null;
+    this.lastError = null;
+    this.errors = [];
+    this.maxDrop = maxDrop;
+    this.pendingSync = null;
   }
 
   async init() {
-    if (this.importOnStart && this.url) {
-      try { await this.importFromUrl(); }
-      catch (error) { console.error(`[CATALOG] Import CSV saat start gagal: ${error.message}`); }
-    }
+    if (this.url) await this.sync();
+  }
+
+  getStatus() {
+    return {
+      source: this.url ? 'Google Sheets CSV' : 'Belum dikonfigurasi',
+      itemCount: this.db.prepare('SELECT COUNT(*) AS count FROM menus WHERE active = 1').get().count,
+      lastAttemptAt: this.lastAttemptAt,
+      lastSuccessAt: this.lastImportAt,
+      lastError: this.lastError,
+      errors: this.errors,
+      stale: !this.lastImportAt || Date.now() - Date.parse(this.lastImportAt) > 30 * 60_000,
+    };
+  }
+
+  sync() {
+    if (this.pendingSync) return this.pendingSync;
+    this.pendingSync = (async () => {
+      this.lastAttemptAt = new Date().toISOString();
+      try {
+        const count = await this.importFromUrl();
+        this.lastError = null;
+        this.errors = [];
+        return { changed: true, count, errors: [] };
+      } catch (error) {
+        this.lastError = error.message;
+        this.errors = [error.message];
+        console.error(`[CATALOG] Sinkronisasi gagal: ${error.message}`);
+        return { changed: false, errors: this.errors };
+      }
+    })().finally(() => { this.pendingSync = null; });
+    return this.pendingSync;
   }
 
   async getMenus() {
@@ -75,14 +136,19 @@ export class CatalogService {
     if (!this.url) throw new Error('MENU_CSV_URL belum diatur');
     const response = await fetch(this.url, { signal: AbortSignal.timeout(10_000) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const menus = normalizeCatalogCsv(await response.text());
+    const menus = validateCatalogCsv(await response.text());
     if (!menus.length) throw new Error('CSV tidak berisi menu valid');
+    if (!menus.some(menu => menu.active && menu.stock > 0)) throw new Error('CSV tidak berisi menu tersedia; sinkronisasi dibatalkan');
+    const previousCount = this.db.prepare('SELECT COUNT(*) AS count FROM menus WHERE active = 1').get().count;
+    if (previousCount && menus.length < previousCount * (1 - this.maxDrop)) {
+      throw new Error(`Jumlah menu turun dari ${previousCount} menjadi ${menus.length}; sinkronisasi dibatalkan`);
+    }
     this.syncLocalCatalog(menus);
     this.lastImportAt = new Date().toISOString();
     return menus.length;
   }
 
-  /** Upsert hasil import. Alias yang sudah diedit admin tidak dihapus. */
+  /** Upsert hasil import dalam satu transaksi; menu yang hilang dinonaktifkan. */
   syncLocalCatalog(menus) {
     const save = this.db.prepare(`INSERT INTO menus(id,name,price,active,stock,description,aliases)
       VALUES (@id,@name,@price,@active,@stock,@description,@aliases)
@@ -94,6 +160,7 @@ export class CatalogService {
       const existing = this.db.prepare('SELECT id FROM menus').all();
       items.forEach(item => {
         save.run({ ...item, active: item.active ? 1 : 0, aliases: JSON.stringify(item.aliases) });
+        this.db.prepare('DELETE FROM menu_aliases WHERE menu_id = ?').run(item.id);
         for (const alias of item.aliases) {
           const norm = normalize(alias);
           if (norm) insertAlias.run(item.id, norm, alias);

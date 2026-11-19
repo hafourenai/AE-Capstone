@@ -21,7 +21,7 @@ API membuat SQLite di `CUSTOMER_MODULE_DB_PATH`, menjalankan schema migration am
 - Set `CORS_ORIGINS` ke domain Vercel resmi dan gunakan HTTPS reverse proxy.
 - Backup SQLite: gunakan `.backup` SQLite atau `VACUUM INTO` secara terjadwal ke storage berbeda; jangan menyalin file aktif pada mode WAL secara langsung.
 
-Menu production disimpan di SQLite melalui dashboard. `MENU_CSV_URL` hanya dipakai bila import diminta eksplisit (`MENU_CSV_IMPORT_ON_START=true` atau `POST /api/v1/admin/menus/import-csv`), dan import tidak menghapus alias yang sudah diedit admin. Item nonaktif atau tanpa stok tidak dapat dipesan. Deployment VPS menggunakan `ops/deploy-vps.sh`, yang melakukan backup, instalasi dependency native, test, restart service, dan health check secara berurutan.
+Spreadsheet CSV pada `MENU_CSV_URL` adalah sumber utama menu. SQLite menyimpan salinan terakhir yang valid: sinkron dilakukan saat startup, setiap `MENU_SYNC_INTERVAL_MS` (default 300000 ms), atau lewat tombol "Sinkron sekarang" di dashboard. Kolom CSV yang didukung: `kode`, `nama`, `harga`, `stok`, `aktif`, `alias` (alias dipisahkan `|` atau koma). Menu yang hilang dari CSV dinonaktifkan; CSV rusak, kosong, atau penurunan jumlah menu > 50% tidak mengganti data lama. Edit menu dan alias hanya melalui spreadsheet, bukan dashboard. Item nonaktif atau tanpa stok tidak dapat dipesan. Deployment VPS menggunakan `ops/deploy-vps.sh`, yang melakukan backup, instalasi dependency native, test, restart service, dan health check secara berurutan.
 
 ## Bot WhatsApp
 

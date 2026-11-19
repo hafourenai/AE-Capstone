@@ -34,12 +34,19 @@ function Customer({ mode, setMode }) {
   const [branches, setBranches] = useState([]);
   const [sent, setSent] = useState(null);
   const [error, setError] = useState('');
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState('');
 
-  useEffect(() => {
+  const loadCatalog = useCallback(() => {
+    setCatalogLoading(true);
+    setCatalogError('');
     Promise.all([request('/public/menu'), request('/public/branches')])
       .then(([m, b]) => { setMenus(m); setBranches(b); })
-      .catch(() => setError('Menu belum dapat dimuat. Silakan coba lagi.'));
+      .catch(() => setCatalogError('Menu belum dapat dimuat. Silakan coba lagi.'))
+      .finally(() => setCatalogLoading(false));
   }, []);
+
+  useEffect(() => { loadCatalog(); }, [loadCatalog]);
 
   const sendOrder = async (e) => {
     e.preventDefault();
@@ -148,6 +155,7 @@ function Customer({ mode, setMode }) {
             <img src="/brand-top-right.jpg" alt="Maskot Sambal Joelid" />
           </div>
           <div className="customer-form-card">
+            {catalogError && <p className="error" role="alert">{catalogError} <button type="button" onClick={loadCatalog}>Coba lagi</button></p>}
             {error && <p className="error" role="alert">{error}</p>}
             <form onSubmit={mode === 'order' ? sendOrder : sendComplaint}>
               <div className="customer-form-row">
@@ -182,7 +190,7 @@ function Customer({ mode, setMode }) {
                           <input name={`qty-${m.id}`} type="number" min="0" max="99" defaultValue="0" aria-label={`Jumlah ${m.name}`} />
                         </label>
                       ))}
-                      {!menus.length && <p>Menu belum tersedia. Silakan coba lagi nanti.</p>}
+                       {!menus.length && <p>{catalogLoading ? 'Memuat menu…' : catalogError ? 'Gagal memuat menu.' : 'Menu belum tersedia. Silakan coba lagi nanti.'}</p>}
                     </div>
                   </div>
                   <div className="form-field">
@@ -373,76 +381,44 @@ function SourceBadge({ source }) {
 
 function CatalogSettings({ token, onError }) {
   const [menus, setMenus] = useState([]);
-  const [drafts, setDrafts] = useState({});
+  const [syncStatus, setSyncStatus] = useState(null);
   const [settings, setSettings] = useState({ opening_hours: '', address: '', phone: '', business_name: '' });
   const [templates, setTemplates] = useState({});
   const [failed, setFailed] = useState([]);
-  const [aliasChoice, setAliasChoice] = useState({});
-  const [newMenu, setNewMenu] = useState({ id: '', name: '', price: '', stock: '' });
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
-      const [menuList, settingMap, templateMap, failedList] = await Promise.all([
+      const [menuList, settingMap, templateMap, failedList, status] = await Promise.all([
         request('/admin/menus', { headers: { Authorization: `Bearer ${token}` } }),
         request('/admin/settings', { headers: { Authorization: `Bearer ${token}` } }),
         request('/admin/templates', { headers: { Authorization: `Bearer ${token}` } }),
         request('/admin/failed-messages', { headers: { Authorization: `Bearer ${token}` } }),
+        request('/admin/menu-sync-status', { headers: { Authorization: `Bearer ${token}` } }),
       ]);
       setMenus(menuList);
       setSettings(prev => ({ ...prev, ...settingMap }));
       setTemplates(templateMap);
       setFailed(failedList);
-      setDrafts(Object.fromEntries(menuList.map(menu => [menu.id, {
-        price: menu.price,
-        stock: menu.stock,
-        active: menu.active,
-        aliases: (menu.aliases || []).join(', '),
-      }])));
+      setSyncStatus(status);
     } catch (error) { onError(error.message); }
-  }, [token]);
+    finally { setLoading(false); }
+  }, [token, onError]);
 
   useEffect(() => { load(); }, [load]);
 
   const flash = (message) => { setNotice(message); setTimeout(() => setNotice(''), 2500); };
 
-  const patchDraft = (id, field, value) => setDrafts(prev => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
-
-  const saveMenu = async (menu) => {
-    const draft = drafts[menu.id] || {};
+  const syncMenu = async () => {
     try {
       setSaving(true);
-      await request(`/admin/menus/${menu.id}`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ price: Number(draft.price), stock: Number(draft.stock), active: Boolean(draft.active) }),
-      });
-      await request(`/admin/menus/${menu.id}/aliases`, {
-        method: 'PUT',
-        headers: { Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ aliases: String(draft.aliases || '').split(',').map(a => a.trim()).filter(Boolean) }),
-      });
+      const result = await request('/admin/menu-sync', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
       await load();
-      flash(`Menu ${menu.name} disimpan.`);
-    } catch (error) { onError(error.message); } finally { setSaving(false); }
-  };
-
-  const createMenu = async (event) => {
-    event.preventDefault();
-    try {
-      setSaving(true);
-      await request('/admin/menus', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          id: newMenu.id.trim(), name: newMenu.name.trim(), price: Number(newMenu.price),
-          stock: newMenu.stock === '' ? 999 : Number(newMenu.stock),
-        }),
-      });
-      setNewMenu({ id: '', name: '', price: '', stock: '' });
-      await load();
-      flash('Menu baru ditambahkan.');
+      if (!result.changed) onError(result.errors?.join(', ') || 'Menu belum berubah.');
+      else flash('Menu dari spreadsheet diperbarui.');
     } catch (error) { onError(error.message); } finally { setSaving(false); }
   };
 
@@ -468,21 +444,6 @@ function CatalogSettings({ token, onError }) {
         body: JSON.stringify({ content }),
       });
       flash(`Template ${key} disimpan.`);
-    } catch (error) { onError(error.message); } finally { setSaving(false); }
-  };
-
-  const addAliasFromFailed = async (item) => {
-    const menuId = aliasChoice[item.id];
-    if (!menuId) { onError('Pilih menu tujuan alias terlebih dahulu.'); return; }
-    try {
-      setSaving(true);
-      await request(`/admin/failed-messages/${item.id}/alias`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ menuId }),
-      });
-      await load();
-      flash('Alias ditambahkan dan pesan ditandai selesai.');
     } catch (error) { onError(error.message); } finally { setSaving(false); }
   };
 
@@ -512,45 +473,27 @@ function CatalogSettings({ token, onError }) {
   return (
     <div className="settings-stack">
       {notice && <p className="settings-notice">{notice}</p>}
+      {loading && <p role="status">Memuat pengaturan…</p>}
+      {!loading && !syncStatus && <button type="button" onClick={load}>Muat ulang pengaturan</button>}
 
       <section className="data-panel settings-panel">
         <div className="panel-heading">
-          <div><p className="eyebrow">KATALOG</p><h2>Menu &amp; Alias</h2></div>
+          <div><p className="eyebrow">KATALOG</p><h2>Menu dari Google Sheets</h2></div>
           <span className="panel-count">{menus.length} menu</span>
         </div>
+        <p className="field-help">Edit nama, harga, stok, status, dan alias langsung di spreadsheet. SQLite mengikuti perubahan otomatis setiap beberapa menit.</p>
+        <p className="field-help">Sinkron terakhir: {syncStatus?.lastSuccessAt ? formatDateTime(syncStatus.lastSuccessAt) : 'Belum berhasil'} {syncStatus?.stale ? '· Data mungkin belum terbaru' : ''}</p>
+        {syncStatus?.errors?.map((message, index) => <p className="error" key={index}>{message}</p>)}
+        <button type="button" onClick={syncMenu} disabled={saving}>Sinkron sekarang</button>
         <div className="settings-rows">
-          {menus.map(menu => {
-            const draft = drafts[menu.id] || {};
-            return (
-              <div className="settings-row" key={menu.id}>
-                <div className="settings-row-head"><b>{menu.name}</b><small>{menu.id}</small></div>
-                <div className="settings-row-fields">
-                  <label>Harga<input type="number" min="0" value={draft.price ?? ''} onChange={e => patchDraft(menu.id, 'price', e.target.value)} /></label>
-                  <label>Stok<input type="number" min="0" value={draft.stock ?? ''} onChange={e => patchDraft(menu.id, 'stock', e.target.value)} /></label>
-                  <label className="settings-check">
-                    <input type="checkbox" checked={Boolean(draft.active)} onChange={e => patchDraft(menu.id, 'active', e.target.checked)} /> Aktif
-                  </label>
-                </div>
-                <label>Alias (pisahkan koma)<input value={draft.aliases ?? ''} onChange={e => patchDraft(menu.id, 'aliases', e.target.value)} placeholder="gdg, gudeg" /></label>
-                <button type="button" onClick={() => saveMenu(menu)} disabled={saving}>Simpan menu</button>
-              </div>
-            );
-          })}
-          {!menus.length && <p className="field-help">Belum ada menu. Tambahkan menu pertama di bawah.</p>}
+          {menus.map(menu => (
+            <div className="settings-row" key={menu.id}>
+              <div className="settings-row-head"><b>{menu.name}</b><small>{menu.id}</small></div>
+              <p>{currency(menu.price)} · Stok {menu.stock} · {menu.active ? 'Aktif' : 'Nonaktif'}</p>
+            </div>
+          ))}
+          {!menus.length && <p className="field-help">Belum ada menu tersimpan. Periksa URL spreadsheet dan status sinkronisasi.</p>}
         </div>
-      </section>
-
-      <section className="data-panel settings-panel">
-        <div className="panel-heading">
-          <div><p className="eyebrow">KATALOG</p><h2>Tambah menu</h2></div>
-        </div>
-        <form className="settings-form" onSubmit={createMenu}>
-          <label>ID<input value={newMenu.id} onChange={e => setNewMenu({ ...newMenu, id: e.target.value })} placeholder="nasi-gudeg" required /></label>
-          <label>Nama<input value={newMenu.name} onChange={e => setNewMenu({ ...newMenu, name: e.target.value })} placeholder="Nasi Gudeg" required /></label>
-          <label>Harga<input type="number" min="0" value={newMenu.price} onChange={e => setNewMenu({ ...newMenu, price: e.target.value })} required /></label>
-          <label>Stok<input type="number" min="0" value={newMenu.stock} onChange={e => setNewMenu({ ...newMenu, stock: e.target.value })} placeholder="999" /></label>
-          <button disabled={saving}>Tambah menu</button>
-        </form>
       </section>
 
       <section className="data-panel settings-panel">
@@ -578,15 +521,8 @@ function CatalogSettings({ token, onError }) {
                 <b>“{item.raw}”</b>
                 <small>{formatDateTime(item.created_at)} · {item.phone || '-'} · {item.reason}</small>
               </div>
-              <div className="settings-row-fields">
-                <label>Jadikan alias menu
-                  <select value={aliasChoice[item.id] || ''} onChange={e => setAliasChoice(prev => ({ ...prev, [item.id]: e.target.value }))}>
-                    <option value="">Pilih menu…</option>
-                    {menus.map(menu => <option key={menu.id} value={menu.id}>{menu.name}</option>)}
-                  </select>
-                </label>
-                <div className="settings-actions">
-                  <button type="button" onClick={() => addAliasFromFailed(item)} disabled={saving}>Tambah alias</button>
+                <div className="settings-row-fields">
+                  <div className="settings-actions">
                   <button type="button" onClick={() => sendToTestSet(item)} disabled={saving}>Ke test set</button>
                   <button type="button" className="ghost" onClick={() => resolveFailed(item)} disabled={saving}>Tandai selesai</button>
                 </div>
@@ -633,6 +569,8 @@ function Admin() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [sortOrder, setSortOrder] = useState('ASC');
+  const [loading, setLoading] = useState(false);
+  const loadSequence = useRef(0);
 
   useEffect(() => {
     request('/public/branches').then(setBranches).catch(() => {});
@@ -641,31 +579,42 @@ function Admin() {
   const load = useCallback(() => {
     if (!token) return;
     if (kind === 'settings') return;
+    const sequence = ++loadSequence.current;
+    setLoading(true);
+    setError('');
     if (kind === 'dashboard') {
       Promise.all([
         request('/admin/orders', { headers: { Authorization: `Bearer ${token}` } }),
         request('/admin/complaints', { headers: { Authorization: `Bearer ${token}` } }),
         request('/admin/whatsapp/conversations', { headers: { Authorization: `Bearer ${token}` } }),
       ])
-        .then(([orders, complaints, whatsapp]) =>
-          setOverview({ orders: orders.data, complaints: complaints.data, whatsapp: whatsapp.data })
-        )
-        .catch(e => setError(e.message));
+        .then(([orders, complaints, whatsapp]) => {
+          if (sequence === loadSequence.current) setOverview({ orders: orders.data, complaints: complaints.data, whatsapp: whatsapp.data });
+        })
+        .catch(e => { if (sequence === loadSequence.current) setError(e.message); })
+        .finally(() => { if (sequence === loadSequence.current) setLoading(false); });
       request('/admin/integrations/health', { headers: { Authorization: `Bearer ${token}` } })
-        .then(setHealth)
-        .catch(e => setHealth({ waha: 'OFFLINE', message: e.message }));
+        .then(value => { if (sequence === loadSequence.current) setHealth(value); })
+        .catch(e => { if (sequence === loadSequence.current) setHealth({ waha: 'OFFLINE', message: e.message }); });
       return;
     }
     const endpoint = kind === 'whatsapp' ? '/admin/whatsapp/conversations' : `/admin/${kind}`;
     request(endpoint, { headers: { Authorization: `Bearer ${token}` } })
-      .then(x => setData(x.data || x))
+      .then(x => { if (sequence === loadSequence.current) setData(x.data || x); })
       .catch(e => {
+        if (sequence !== loadSequence.current) return;
         setError(e.message);
         if (e.message.includes('Autentikasi')) { localStorage.removeItem('token'); setToken(''); }
-      });
+      })
+      .finally(() => { if (sequence === loadSequence.current) setLoading(false); });
   }, [token, kind]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    const refresh = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', refresh);
+    return () => { loadSequence.current += 1; document.removeEventListener('visibilitychange', refresh); };
+  }, [load]);
 
   useEffect(() => {
     if (!token) return;
@@ -677,6 +626,7 @@ function Admin() {
 
   // Reset data dan detail saat berpindah tab
   const switchKind = (next) => {
+    loadSequence.current += 1;
     setKind(next);
     setDetail(null);
     setChatConv(null);
@@ -898,7 +848,8 @@ function Admin() {
           </div>
         )}
 
-        {error && <p className="error">{error}</p>}
+        {error && <p className="error" role="alert">{error} <button type="button" onClick={load}>Coba lagi</button></p>}
+        {loading && kind !== 'settings' && <p role="status">Memuat data…</p>}
 
         {kind === 'settings' && <CatalogSettings token={token} onError={setError} />}
 
@@ -994,7 +945,7 @@ function Admin() {
                     </em>
                   </button>
                 ))}
-                {!filteredData.length && (
+                {!loading && !error && !filteredData.length && (
                   <div className="empty-state">
                     <b>{data.length ? 'Tidak ada data yang cocok dengan filter' : 'Belum ada data'}</b>
                     <span>{data.length ? 'Coba ubah opsi filter atau tekan tombol Reset.' : 'Data baru akan muncul otomatis di sini.'}</span>
