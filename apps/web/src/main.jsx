@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { io } from 'socket.io-client';
-import { Archive, ArrowUpDown, BrainCircuit, Headphones, LayoutDashboard, MessageCircle, Minus, Plus, RotateCcw, Send, Settings, ShoppingCart, Trash2, Wifi, X } from 'lucide-react';
+import { Archive, ArrowUpDown, BrainCircuit, Headphones, LayoutDashboard, LogOut, MessageCircle, Minus, Plus, RotateCcw, Send, Settings, ShoppingCart, Trash2, Wifi, X } from 'lucide-react';
 import './style.css';
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api/v1';
@@ -831,6 +831,9 @@ function AdminSession({ token, onLogout }) {
           </button>
           <button className={kind === 'evaluation' ? 'active' : ''} onClick={() => switchKind('evaluation')}>
             <BrainCircuit /> Evaluasi
+          </button>
+          <button className="mobile-logout" onClick={onLogout}>
+            <LogOut /> Keluar
           </button>
         </nav>
         <div className="sidebar-foot">
