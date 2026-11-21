@@ -25,6 +25,10 @@ export class MessageLogger {
     return this.db.prepare('UPDATE failed_messages SET resolved = 1 WHERE id = ?').run(id).changes > 0;
   }
 
+  remove(id) {
+    return this.db.prepare('DELETE FROM failed_messages WHERE id = ?').run(id).changes > 0;
+  }
+
   getFailed(id) {
     return this.db.prepare('SELECT * FROM failed_messages WHERE id = ?').get(id);
   }

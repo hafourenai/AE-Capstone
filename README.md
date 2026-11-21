@@ -33,6 +33,10 @@ Pipeline pesan: **rules → fuzzy menu → LLM (ekstraksi JSON) → tanya balik/
 - Media (gambar/dokumen/voice note) di-handoff ke staf, tidak dibuang diam-diam.
 - Log pesan tersimpan di `wa_message_logs`; pesan gagal muncul di tab Pengaturan untuk dijadikan alias menu atau dikirim ke test set.
 
+### Evaluasi dan pembelajaran bot
+
+Pesan yang gagal dipahami muncul pada halaman admin **Evaluasi Bot**. Admin dapat memilih **Ajarkan** agar contoh tersimpan di database dan langsung aktif, **Arsipkan** untuk menyimpan riwayat tanpa mengajari bot, atau **Hapus** untuk membuang data permanen. Ini adalah pembelajaran terkontrol berbasis memori/alias, bukan fine-tuning model Groq. Panduan lengkap: [`docs/BOT-LEARNING.md`](docs/BOT-LEARNING.md).
+
 Jalankan test dan evaluasi:
 
 ```bash

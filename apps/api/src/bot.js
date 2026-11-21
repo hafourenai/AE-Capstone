@@ -162,6 +162,14 @@ export class BotHandler {
       if (reply) return reply;
     }
 
+    // Memori yang sudah disetujui admin: exact match aktif tanpa menunggu deployment.
+    const learned = this.db.prepare('SELECT * FROM learned_examples WHERE phrase_norm = ? AND active = 1').get(norm);
+    if (learned) {
+      let learnedItems = [];
+      try { learnedItems = JSON.parse(learned.items_json || '[]'); } catch { learnedItems = []; }
+      return this.applyLearned(session, raw, learned.intent, learnedItems, menus, branches);
+    }
+
     // Lapisan 2: fuzzy menu.
     const match = await this.matcher.search(norm);
     if (match.status === 'ambiguous') return this.askClarify(session, match.ambiguous[0]);
@@ -185,6 +193,56 @@ export class BotHandler {
 
   settings() {
     return Object.fromEntries(this.db.prepare('SELECT key, value FROM business_settings').all().map((row) => [row.key, row.value]));
+  }
+
+  applyLearned(session, raw, intent, items, menus, branches) {
+    if (intent === 'tanya_menu') return this.menu(session, menus);
+    if (intent === 'tanya_jam') return this.jam(session, this.settings());
+    if (intent === 'tanya_lokasi') return this.lokasi(session, this.settings());
+    if (intent === 'bicara_admin') return this.handoff(session);
+    if (intent === 'batal') return this.cancel(session);
+    if (intent === 'keluhan') {
+      session.draft.kind = 'complaint';
+      session.draft.description = raw;
+      session.botState = 'KELUHAN_NAMA';
+      this.save(session);
+      return this.out(this.templates.render('tanya_nama_keluhan'), 'learned', 'keluhan');
+    }
+    if (intent === 'pesan') {
+      for (const item of items) {
+        if (menus.some(menu => menu.id === item.menuId)) {
+          addDraftItem(session.draft, { menuId: item.menuId, qty: item.qty });
+        }
+      }
+      if (session.draft.items.length) return this.advance(session, menus, branches);
+    }
+    return this.fail(session);
+  }
+
+  learnedExamples(norm, menus) {
+    const words = new Set(norm.split(' ').filter(word => word.length > 2));
+    return this.db.prepare('SELECT phrase_raw, intent, items_json FROM learned_examples WHERE active = 1 ORDER BY updated_at DESC LIMIT 100').all()
+      .map(row => {
+        let items = [];
+        try { items = JSON.parse(row.items_json || '[]'); } catch { items = []; }
+        const candidateNames = items.map(item => item.menu).filter(Boolean);
+        const overlap = normalize(row.phrase_raw).split(' ').filter(word => words.has(word)).length;
+        return {
+          score: overlap,
+          pesan: row.phrase_raw,
+          kandidat: candidateNames,
+          output: {
+            intent: row.intent,
+            items: items.map(item => ({ menu: item.menu, qty: item.qty })),
+            waktu: '',
+            keluhan: row.intent === 'keluhan' ? row.phrase_raw : '',
+          },
+        };
+      })
+      .filter(example => example.score > 0 || norm === normalize(example.pesan))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map(({ score, ...example }) => example);
   }
 
   out(reply, layer, intent = null, extra = {}) {
@@ -375,10 +433,18 @@ export class BotHandler {
 
     let result;
     try {
+      const learnedExamples = this.learnedExamples(normalize(raw), menus);
+      const candidateNames = (candidates || []).map((menu) => menu.name);
+      for (const example of learnedExamples) {
+        for (const name of example.kandidat || []) {
+          if (menus.some(menu => menu.name === name) && !candidateNames.includes(name)) candidateNames.push(name);
+        }
+      }
       result = await this.llm.extract(raw, {
-        candidates: (candidates || []).map((menu) => menu.name).slice(0, 5),
+        candidates: candidateNames.slice(0, 5),
         context: {
           state: session.botState,
+          learnedExamples,
           draft: {
             items: session.draft.items,
             branchId: session.draft.branchId,

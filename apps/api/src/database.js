@@ -101,8 +101,19 @@ export function openDatabase(filename) {
       resolved INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS learned_examples (
+      id INTEGER PRIMARY KEY,
+      phrase_raw TEXT NOT NULL,
+      phrase_norm TEXT NOT NULL UNIQUE,
+      intent TEXT NOT NULL,
+      items_json TEXT NOT NULL DEFAULT '[]',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE INDEX IF NOT EXISTS idx_wa_logs_created ON wa_message_logs(created_at);
     CREATE INDEX IF NOT EXISTS idx_failed_resolved ON failed_messages(resolved, created_at);
+    CREATE INDEX IF NOT EXISTS idx_learned_phrase ON learned_examples(phrase_norm, active);
     CREATE INDEX IF NOT EXISTS idx_wa_msg_id ON whatsapp_messages(waha_message_id);
     CREATE INDEX IF NOT EXISTS idx_wa_conv_phone ON whatsapp_conversations(phone);
     CREATE INDEX IF NOT EXISTS idx_wa_pending_status ON whatsapp_pending_actions(status);

@@ -57,6 +57,21 @@ test('bot: perintah menu dijawab tanpa LLM', async (t) => {
   assert.equal(state.get(conversationId).botState, 'PILIH_MENU');
 });
 
+test('bot: pelajaran admin langsung dipakai sebelum fuzzy dan LLM', async (t) => {
+  const { db, bot, conversationId } = setup(t);
+  db.prepare(`INSERT INTO learned_examples(phrase_raw, phrase_norm, intent, items_json)
+    VALUES (?, ?, ?, ?)`).run(
+    'mw pangan rahasia 2',
+    'mw pangan rahasia 2',
+    'pesan',
+    JSON.stringify([{ menuId: 'nasi-gudeg', menu: 'Nasi Gudeg', qty: 2 }]),
+  );
+
+  const result = await bot.handle({ conversationId, phone: '628111', raw: 'mw pangan rahasia 2' });
+  assert.equal(result.layer, 'rules');
+  assert.match(result.reply, /cabang mana/i);
+});
+
 test('bot: alur pesan -> cabang -> nama -> konfirmasi -> order tersimpan', async (t) => {
   const { db, bot, state, conversationId } = setup(t);
 

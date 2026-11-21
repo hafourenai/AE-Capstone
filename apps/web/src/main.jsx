@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { io } from 'socket.io-client';
-import { ArrowUpDown, Filter, Headphones, LayoutDashboard, MessageCircle, RotateCcw, Send, Settings, ShoppingCart, Wifi, X } from 'lucide-react';
+import { Archive, ArrowUpDown, BrainCircuit, Headphones, LayoutDashboard, MessageCircle, Minus, Plus, RotateCcw, Send, Settings, ShoppingCart, Trash2, Wifi, X } from 'lucide-react';
 import './style.css';
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api/v1';
@@ -38,6 +38,7 @@ function Customer({ mode, setMode }) {
   const [error, setError] = useState('');
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState('');
+  const [quantities, setQuantities] = useState({});
 
   const loadCatalog = useCallback(() => {
     setCatalogLoading(true);
@@ -54,7 +55,7 @@ function Customer({ mode, setMode }) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     const items = menus
-      .map(m => ({ menuId: m.id, quantity: Number(fd.get(`qty-${m.id}`)) }))
+      .map(m => ({ menuId: m.id, quantity: Number(quantities[m.id] || 0) }))
       .filter(i => i.quantity > 0);
     if (!items.length) { setError('Pilih minimal satu menu sebelum mengirim pesanan.'); return; }
     try {
@@ -91,6 +92,9 @@ function Customer({ mode, setMode }) {
   };
 
   const navigate = next => { setError(''); setMode(next); };
+  const setQuantity = (menuId, value) => setQuantities(current => ({ ...current, [menuId]: Math.max(0, Math.min(99, Number(value) || 0)) }));
+  const orderCount = Object.values(quantities).reduce((sum, qty) => sum + qty, 0);
+  const orderTotal = menus.reduce((sum, menu) => sum + menu.price * (quantities[menu.id] || 0), 0);
 
   return (
     <div className="customer-page">
@@ -187,10 +191,14 @@ function Customer({ mode, setMode }) {
                     <p>Isi jumlah untuk menu yang ingin dipesan.</p>
                     <div className="menu-list">
                       {menus.map(m => (
-                        <label className="menu" key={m.id}>
+                        <div className={`menu ${quantities[m.id] ? 'selected' : ''}`} key={m.id}>
                           <span><b>{m.name}</b><small>{currency(m.price)}</small></span>
-                          <input name={`qty-${m.id}`} type="number" min="0" max="99" defaultValue="0" aria-label={`Jumlah ${m.name}`} />
-                        </label>
+                          <div className="quantity-stepper" aria-label={`Jumlah ${m.name}`}>
+                            <button type="button" onClick={() => setQuantity(m.id, (quantities[m.id] || 0) - 1)} aria-label={`Kurangi ${m.name}`}><Minus /></button>
+                            <input name={`qty-${m.id}`} type="number" min="0" max="99" value={quantities[m.id] || 0} onChange={event => setQuantity(m.id, event.target.value)} />
+                            <button type="button" onClick={() => setQuantity(m.id, (quantities[m.id] || 0) + 1)} aria-label={`Tambah ${m.name}`}><Plus /></button>
+                          </div>
+                        </div>
                       ))}
                        {!menus.length && <p>{catalogLoading ? 'Memuat menu…' : catalogError ? 'Gagal memuat menu.' : 'Menu belum tersedia. Silakan coba lagi nanti.'}</p>}
                     </div>
@@ -206,10 +214,10 @@ function Customer({ mode, setMode }) {
                     <label htmlFor="f-category">Kategori keluhan</label>
                     <select id="f-category" name="category">
                       <option value="">Pilih kategori (opsional)</option>
-                      <option value="FOOD_QUALITY">Kualitas makanan</option>
-                      <option value="SERVICE">Pelayanan</option>
-                      <option value="ORDER_ERROR">Kesalahan pesanan</option>
-                      <option value="OTHER">Lainnya</option>
+                      <option value="KUALITAS_MAKANAN">Kualitas makanan</option>
+                      <option value="PELAYANAN">Pelayanan</option>
+                      <option value="PESANAN">Kesalahan pesanan</option>
+                      <option value="LAINNYA">Lainnya</option>
                     </select>
                   </div>
                   <div className="form-field">
@@ -219,7 +227,8 @@ function Customer({ mode, setMode }) {
                 </>
               )}
 
-              <button type="submit">{mode === 'order' ? 'Kirim pesanan →' : 'Kirim keluhan →'}</button>
+              {mode === 'order' && <div className="order-summary"><span><b>{orderCount}</b> item dipilih</span><strong>{currency(orderTotal)}</strong></div>}
+              <button className="customer-submit" type="submit">{mode === 'order' ? 'Kirim pesanan' : 'Kirim keluhan'} <span>→</span></button>
             </form>
           </div>
         </section>
@@ -386,7 +395,6 @@ function CatalogSettings({ token, onError }) {
   const [syncStatus, setSyncStatus] = useState(null);
   const [settings, setSettings] = useState({ opening_hours: '', address: '', phone: '', business_name: '' });
   const [templates, setTemplates] = useState({});
-  const [failed, setFailed] = useState([]);
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -394,17 +402,15 @@ function CatalogSettings({ token, onError }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [menuList, settingMap, templateMap, failedList, status] = await Promise.all([
+      const [menuList, settingMap, templateMap, status] = await Promise.all([
         request('/admin/menus', { headers: { Authorization: `Bearer ${token}` } }),
         request('/admin/settings', { headers: { Authorization: `Bearer ${token}` } }),
         request('/admin/templates', { headers: { Authorization: `Bearer ${token}` } }),
-        request('/admin/failed-messages', { headers: { Authorization: `Bearer ${token}` } }),
         request('/admin/menu-sync-status', { headers: { Authorization: `Bearer ${token}` } }),
       ]);
       setMenus(menuList);
       setSettings(prev => ({ ...prev, ...settingMap }));
       setTemplates(templateMap);
-      setFailed(failedList);
       setSyncStatus(status);
     } catch (error) { onError(error.message); }
     finally { setLoading(false); }
@@ -449,33 +455,6 @@ function CatalogSettings({ token, onError }) {
     } catch (error) { onError(error.message); } finally { setSaving(false); }
   };
 
-  const sendToTestSet = async (item) => {
-    try {
-      const intentInput = window.prompt(`Masukkan intent yang benar untuk pesan:\n"${item.raw}"\n\nContoh: pesan / keluhan / tanya_menu / tanya_jam / tanya_lokasi / bicara_admin`, 'pesan');
-      if (intentInput === null) return; // Dibatalkan oleh admin
-
-      setSaving(true);
-      await request(`/admin/failed-messages/${item.id}/testset`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ intent: intentInput.trim() }),
-      });
-      await load();
-      flash('Pesan berhasil diberi label & ditambahkan ke test set evaluasi.');
-    } catch (error) { onError(error.message); } finally { setSaving(false); }
-  };
-
-  const resolveFailed = async (item) => {
-    try {
-      setSaving(true);
-      await request(`/admin/failed-messages/${item.id}/resolve`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      await load();
-    } catch (error) { onError(error.message); } finally { setSaving(false); }
-  };
-
   return (
     <div className="settings-stack">
       {notice && <p className="settings-notice">{notice}</p>}
@@ -517,30 +496,6 @@ function CatalogSettings({ token, onError }) {
 
       <section className="data-panel settings-panel">
         <div className="panel-heading">
-          <div><p className="eyebrow">EVALUASI</p><h2>Pesan gagal dipahami</h2></div>
-          <span className="panel-count">{failed.length} pesan</span>
-        </div>
-        <div className="settings-rows">
-          {failed.map(item => (
-            <div className="settings-row" key={item.id}>
-              <div className="settings-row-head">
-                <b>“{item.raw}”</b>
-                <small>{formatDateTime(item.created_at)} · {item.phone || '-'} · {item.reason}</small>
-              </div>
-                <div className="settings-row-fields">
-                  <div className="settings-actions">
-                  <button type="button" onClick={() => sendToTestSet(item)} disabled={saving} title="Beri label intent dan simpan ke dataset evaluasi lokal">Beri label &amp; simpan</button>
-                  <button type="button" className="ghost" onClick={() => resolveFailed(item)} disabled={saving}>Tandai selesai</button>
-                </div>
-              </div>
-            </div>
-          ))}
-          {!failed.length && <p className="field-help">Belum ada pesan yang gagal dipahami. Bagus!</p>}
-        </div>
-      </section>
-
-      <section className="data-panel settings-panel">
-        <div className="panel-heading">
           <div><p className="eyebrow">BOT</p><h2>Template pesan</h2></div>
           <span className="panel-count">{Object.keys(templates).length} template</span>
         </div>
@@ -553,6 +508,110 @@ function CatalogSettings({ token, onError }) {
           ))}
           {!Object.keys(templates).length && <p className="field-help">Template akan muncul di sini setelah diinisialisasi backend.</p>}
         </div>
+      </section>
+    </div>
+  );
+}
+
+function BotEvaluation({ token, onError }) {
+  const [failed, setFailed] = useState([]);
+  const [learned, setLearned] = useState([]);
+  const [menus, setMenus] = useState([]);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ intent: 'pesan', menuId: '', qty: 1 });
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      const [failedList, learnedList, menuList] = await Promise.all([
+        request('/admin/failed-messages', { headers }),
+        request('/admin/learned-examples', { headers }),
+        request('/admin/menus', { headers }),
+      ]);
+      setFailed(failedList);
+      setLearned(learnedList);
+      setMenus(menuList.filter(menu => menu.active));
+    } catch (error) { onError(error.message); }
+  }, [token, onError]);
+
+  useEffect(() => { load(); }, [load]);
+  const flash = message => { setNotice(message); window.setTimeout(() => setNotice(''), 3000); };
+  const headers = { Authorization: `Bearer ${token}` };
+
+  const teach = async event => {
+    event.preventDefault();
+    if (!editing) return;
+    try {
+      setSaving(true);
+      const items = form.intent === 'pesan' ? [{ menuId: form.menuId, qty: Number(form.qty) }] : [];
+      await request(`/admin/failed-messages/${editing.id}/learn`, {
+        method: 'POST', headers, body: JSON.stringify({ intent: form.intent, items }),
+      });
+      setEditing(null);
+      flash('Pelajaran disimpan dan langsung aktif.');
+      await load();
+    } catch (error) { onError(error.message); } finally { setSaving(false); }
+  };
+
+  const archive = async item => {
+    try {
+      setSaving(true);
+      await request(`/admin/failed-messages/${item.id}/resolve`, { method: 'PATCH', headers });
+      flash('Pesan diarsipkan tanpa mengajari bot.');
+      await load();
+    } catch (error) { onError(error.message); } finally { setSaving(false); }
+  };
+
+  const remove = async item => {
+    if (!window.confirm(`Hapus permanen pesan “${item.raw}”? Data ini tidak akan dipakai untuk pembelajaran.`)) return;
+    try {
+      setSaving(true);
+      await request(`/admin/failed-messages/${item.id}`, { method: 'DELETE', headers });
+      if (editing?.id === item.id) setEditing(null);
+      flash('Pesan dihapus permanen.');
+      await load();
+    } catch (error) { onError(error.message); } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="evaluation-stack">
+      {notice && <p className="settings-notice">{notice}</p>}
+      <section className="evaluation-guide">
+        <BrainCircuit />
+        <div><p className="eyebrow">AUTO-LEARNING TERKENDALI</p><h2>Ajarkan sekali, langsung aktif.</h2><p>Bot hanya belajar setelah persetujuan admin. <b>Ajarkan</b> menyimpan contoh ke database, <b>Arsipkan</b> menyimpannya sebagai riwayat, dan <b>Hapus</b> membuangnya permanen.</p></div>
+      </section>
+
+      <section className="data-panel settings-panel evaluation-panel">
+        <div className="panel-heading"><div><p className="eyebrow">PERLU DITINJAU</p><h2>Pesan gagal dipahami</h2></div><span>{failed.length} pesan</span></div>
+        <div className="evaluation-list">
+          {failed.map(item => (
+            <article className="evaluation-item" key={item.id}>
+              <div className="evaluation-copy"><blockquote>“{item.raw}”</blockquote><small>{formatDateTime(item.created_at)} · {item.reason || 'tidak dipahami'}</small></div>
+              <div className="evaluation-actions">
+                <button className="teach" onClick={() => { setEditing(item); setForm({ intent: 'pesan', menuId: menus[0]?.id || '', qty: 1 }); }} disabled={saving}><BrainCircuit /> Ajarkan</button>
+                <button onClick={() => archive(item)} disabled={saving}><Archive /> Arsipkan</button>
+                <button className="danger" onClick={() => remove(item)} disabled={saving}><Trash2 /> Hapus</button>
+              </div>
+              {editing?.id === item.id && (
+                <form className="learning-form" onSubmit={teach}>
+                  <label>Maksud pelanggan<select value={form.intent} onChange={event => setForm({ ...form, intent: event.target.value })}>
+                    <option value="pesan">Memesan makanan</option><option value="keluhan">Keluhan</option><option value="tanya_menu">Tanya menu</option><option value="tanya_jam">Tanya jam buka</option><option value="tanya_lokasi">Tanya lokasi</option><option value="bicara_admin">Minta admin</option><option value="batal">Membatalkan</option><option value="lainnya">Lainnya</option>
+                  </select></label>
+                  {form.intent === 'pesan' && <><label>Menu<select required value={form.menuId} onChange={event => setForm({ ...form, menuId: event.target.value })}><option value="">Pilih menu</option>{menus.map(menu => <option key={menu.id} value={menu.id}>{menu.name}</option>)}</select></label><label>Jumlah<input type="number" min="1" max="99" value={form.qty} onChange={event => setForm({ ...form, qty: event.target.value })} /></label></>}
+                  <div><button disabled={saving}>Simpan &amp; aktifkan</button><button type="button" className="ghost" onClick={() => setEditing(null)}>Batal</button></div>
+                </form>
+              )}
+            </article>
+          ))}
+          {!failed.length && <div className="empty-state"><b>Semua sudah ditinjau</b><span>Tidak ada pesan gagal yang menunggu keputusan.</span></div>}
+        </div>
+      </section>
+
+      <section className="data-panel settings-panel learned-panel">
+        <div className="panel-heading"><div><p className="eyebrow">MEMORI BOT</p><h2>Pelajaran aktif</h2></div><span>{learned.length} contoh</span></div>
+        <div className="settings-rows">{learned.slice(0, 20).map(item => <div className="settings-row" key={item.id}><div className="settings-row-head"><b>“{item.phrase_raw}”</b><small>{item.intent}</small></div>{item.items.length > 0 && <p className="field-help">{item.items.map(entry => `${entry.qty}× ${entry.menu}`).join(', ')}</p>}</div>)}{!learned.length && <p className="field-help settings-row">Belum ada pelajaran aktif.</p>}</div>
       </section>
     </div>
   );
@@ -583,7 +642,7 @@ function AdminSession({ token, onLogout }) {
 
   const load = useCallback(() => {
     if (!token) return;
-    if (kind === 'settings') return;
+    if (kind === 'settings' || kind === 'evaluation') return;
     const sequence = ++loadSequence.current;
     setLoading(true);
     setError('');
@@ -742,7 +801,7 @@ function AdminSession({ token, onLogout }) {
   }, [data, kind, filterStatus, filterBranch, filterDatePreset, startDate, endDate, sortOrder]);
 
   const hasActiveFilters = filterStatus !== 'ALL' || filterBranch !== 'ALL' || filterDatePreset !== 'ALL' || startDate || endDate || sortOrder !== 'ASC';
-  const title = kind === 'dashboard' ? 'Ikhtisar' : kind === 'orders' ? 'Pesanan' : kind === 'complaints' ? 'Keluhan' : kind === 'settings' ? 'Pengaturan Bot' : 'Percakapan WhatsApp';
+  const title = kind === 'dashboard' ? 'Ikhtisar' : kind === 'orders' ? 'Pesanan' : kind === 'complaints' ? 'Keluhan' : kind === 'settings' ? 'Pengaturan Bot' : kind === 'evaluation' ? 'Evaluasi Bot' : 'Percakapan WhatsApp';
   const newCount = data.filter(item => ['NEW', 'WAITING_ADMIN'].includes(item.status || item.state)).length;
   const activeCount = data.filter(item => ['CONFIRMED', 'PROCESSING', 'IN_REVIEW', 'IN_PROGRESS', 'ADMIN_ACTIVE'].includes(item.status || item.state)).length;
 
@@ -770,6 +829,9 @@ function AdminSession({ token, onLogout }) {
           <button className={kind === 'settings' ? 'active' : ''} onClick={() => switchKind('settings')}>
             <Settings /> Pengaturan
           </button>
+          <button className={kind === 'evaluation' ? 'active' : ''} onClick={() => switchKind('evaluation')}>
+            <BrainCircuit /> Evaluasi
+          </button>
         </nav>
         <div className="sidebar-foot">
           <span className="online-dot" /> Sistem online
@@ -791,7 +853,7 @@ function AdminSession({ token, onLogout }) {
           </div>
         </header>
 
-        {kind === 'settings' ? null : kind === 'dashboard' ? (
+        {kind === 'settings' || kind === 'evaluation' ? null : kind === 'dashboard' ? (
           <>
             <div className="metric-grid overview-metrics">
               <article>
@@ -836,11 +898,12 @@ function AdminSession({ token, onLogout }) {
         )}
 
         {error && <p className="error" role="alert">{error} <button type="button" onClick={load}>Coba lagi</button></p>}
-        {loading && kind !== 'settings' && <p role="status">Memuat data…</p>}
+        {loading && kind !== 'settings' && kind !== 'evaluation' && <p role="status">Memuat data…</p>}
 
         {kind === 'settings' && <CatalogSettings token={token} onError={setError} />}
+        {kind === 'evaluation' && <BotEvaluation token={token} onError={setError} />}
 
-        {kind !== 'dashboard' && kind !== 'settings' && (
+        {kind !== 'dashboard' && kind !== 'settings' && kind !== 'evaluation' && (
           <div className={`admin-panel ${(detail || chatConv) ? 'has-detail' : ''}`}>
             {/* Daftar */}
             <section className="data-panel">

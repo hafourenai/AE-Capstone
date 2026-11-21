@@ -104,7 +104,9 @@ export class LLMClient {
 
   buildMessages(message, candidates, context) {
     const messages = [{ role: 'system', content: SYSTEM_PROMPT }];
-    for (const example of (this.fewshot || []).slice(0, 15)) {
+    const learned = Array.isArray(context?.learnedExamples) ? context.learnedExamples : [];
+    const examples = [...learned.slice(0, 3), ...(this.fewshot || [])].slice(0, 3);
+    for (const example of examples) {
       messages.push({ role: 'user', content: buildUserContent(example.pesan, example.kandidat || [], {}) });
       messages.push({ role: 'assistant', content: JSON.stringify(example.output) });
     }

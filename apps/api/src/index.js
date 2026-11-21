@@ -276,6 +276,42 @@ api.patch('/admin/failed-messages/:id/resolve', auth, (req, res) => {
   res.sendStatus(204);
 });
 
+api.delete('/admin/failed-messages/:id', auth, (req, res) => {
+  if (!messageLogger.remove(req.params.id)) return res.sendStatus(404);
+  res.sendStatus(204);
+});
+
+const learningInput = z.object({
+  intent: z.enum(['pesan', 'keluhan', 'tanya_menu', 'tanya_jam', 'tanya_lokasi', 'bicara_admin', 'batal', 'lainnya']),
+  items: z.array(z.object({ menuId: z.string().min(1), qty: z.number().int().min(1).max(99) })).max(10).default([]),
+});
+
+api.post('/admin/failed-messages/:id/learn', auth, validate(learningInput), (req, res) => {
+  const failed = messageLogger.getFailed(req.params.id);
+  if (!failed) return res.sendStatus(404);
+  const items = req.body.items.map(item => {
+    const menu = db.prepare('SELECT id, name FROM menus WHERE id = ?').get(item.menuId);
+    if (!menu) return null;
+    return { menuId: menu.id, menu: menu.name, qty: item.qty };
+  }).filter(Boolean);
+  if (req.body.intent === 'pesan' && !items.length) {
+    return res.status(400).json({ error: 'Pilih minimal satu menu untuk intent pesanan.' });
+  }
+  db.prepare(`INSERT INTO learned_examples(phrase_raw, phrase_norm, intent, items_json, active, updated_at)
+    VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+    ON CONFLICT(phrase_norm) DO UPDATE SET phrase_raw=excluded.phrase_raw, intent=excluded.intent,
+      items_json=excluded.items_json, active=1, updated_at=CURRENT_TIMESTAMP`)
+    .run(failed.raw, failed.norm || normalize(failed.raw), req.body.intent, JSON.stringify(items));
+  messageLogger.resolve(failed.id);
+  res.json({ learned: true, phrase: failed.raw, intent: req.body.intent, items });
+});
+
+api.get('/admin/learned-examples', auth, (_req, res) => {
+  const examples = db.prepare('SELECT * FROM learned_examples ORDER BY updated_at DESC LIMIT 200').all()
+    .map(row => ({ ...row, active: Boolean(row.active), items: JSON.parse(row.items_json || '[]') }));
+  res.json(examples);
+});
+
 
 api.post('/admin/failed-messages/:id/testset', auth, (req, res) => {
   const failed = messageLogger.getFailed(req.params.id);

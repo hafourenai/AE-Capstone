@@ -178,7 +178,7 @@ form > button, .success button { background: #211813; color: #fffaf0; border: 0;
   .admin-shell { display: block; padding-bottom: 72px; }
   .admin-sidebar { position: fixed; z-index: 15; inset: auto 0 0; width: 100%; height: 66px; padding: 8px 12px; }
   .admin-brand, .sidebar-foot { display: none; }
-  .admin-sidebar nav { display: grid; grid-template-columns: repeat(4, 1fr); margin: 0; gap: 4px; }
+  .admin-sidebar nav { display: grid; grid-template-columns: repeat(6, 1fr); margin: 0; gap: 4px; }
   .admin-sidebar nav button { display: flex; justify-content: center; font-size: .6rem; }
   .admin-workspace { padding: 20px 14px 90px; }
   .admin-topbar h1 { font-size: 2rem; }
@@ -197,6 +197,90 @@ form > button, .success button { background: #211813; color: #fffaf0; border: 0;
   .admin:has(.chat-screen) { margin: 0; padding: 0; }
   .chat-screen { min-height: 400px; max-height: 65vh; border-radius: 0; }
   .message-bubble { max-width: 86%; }
+}
+
+/* Evaluation workspace — operational, explicit, and safe by default */
+.evaluation-stack { display: grid; gap: 20px; }
+.evaluation-guide { display: grid; grid-template-columns: 64px 1fr; gap: 20px; align-items: start; padding: 26px; border: 2px solid #064d2b; border-radius: 14px; background: #fff4bf; box-shadow: 0 6px 0 #d8bd30; }
+.evaluation-guide > svg { width: 58px; height: 58px; padding: 14px; border-radius: 12px; color: #fff; background: #087437; }
+.evaluation-guide h2 { margin: 2px 0 8px; font-size: clamp(1.45rem, 3vw, 2rem); }
+.evaluation-guide p:last-child { max-width: 760px; margin: 0; color: #425546; font-size: .73rem; line-height: 1.75; }
+.evaluation-panel, .learned-panel { overflow: hidden; border: 1px solid #d9d0b8; border-radius: 14px; background: #fffdf4; box-shadow: 0 6px 0 #ded5bd; }
+.evaluation-list { display: grid; }
+.evaluation-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px 24px; padding: 22px 24px; border-bottom: 1px solid #e7e0cc; }
+.evaluation-item:last-child { border-bottom: 0; }
+.evaluation-copy blockquote { margin: 0 0 8px; font: 600 1.08rem/1.4 Fraunces, serif; }
+.evaluation-copy small { color: #777069; font-size: .62rem; }
+.evaluation-actions { display: flex; align-items: center; gap: 8px; }
+.evaluation-actions button { display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 8px 11px; border: 1px solid #cfc7bc; border-radius: 7px; color: #314337; background: #fff; font-size: .65rem; }
+.evaluation-actions button svg { width: 15px; }
+.evaluation-actions .teach { border-color: #087437; color: #fff; background: #087437; }
+.evaluation-actions .danger { border-color: #e7bbb7; color: #a4171e; background: #fff2f0; }
+.learning-form { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 18px; border: 1px solid #d6c672; border-radius: 10px; background: #fff8d5; }
+.learning-form label { color: #5d584b; font-size: .62rem; text-transform: uppercase; letter-spacing: .06em; }
+.learning-form select, .learning-form input { width: 100%; min-height: 42px; border: 1px solid #b8b19d; border-radius: 6px; background: #fff; }
+.learning-form > div { grid-column: 1 / -1; display: flex; gap: 8px; }
+.learning-form button { padding: 11px 16px; border: 0; border-radius: 6px; color: #fff; background: #087437; }
+.learning-form button.ghost { color: #5d584b; background: transparent; }
+
+/* Customer redesign: compact mobile-first ordering instead of a desktop brochure */
+.customer-page { min-height: 100vh; background: #f6f0dc; }
+.customer-header { position: sticky; z-index: 10; top: 0; height: 76px; box-shadow: 0 4px 0 #ffd51b; }
+.customer-hero { min-height: min(620px, calc(100vh - 76px)); }
+.customer-hero-copy { position: relative; isolation: isolate; }
+.customer-hero-copy::before { content: 'PEDAS'; position: absolute; z-index: -1; left: clamp(20px, 5vw, 75px); bottom: 12px; color: #ffffff08; font: 800 clamp(5rem, 14vw, 12rem)/.8 Fraunces, serif; }
+.customer-hero h1 { max-width: 650px; }
+.customer-hero-art::after { content: ''; position: absolute; inset: 0; background: linear-gradient(135deg, transparent 55%, #ffd51b30); pointer-events: none; }
+.customer-choice { border-radius: 8px; box-shadow: 7px 7px 0 #17301f; }
+.customer-choice:nth-child(2) { box-shadow: 7px 7px 0 #d91f1f; }
+.customer-form-page { max-width: 980px; }
+.customer-form-card .menu-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; border: 0; }
+.customer-form-card .menu { min-height: 82px; padding: 13px; border: 1px solid #d9d0b8; border-radius: 9px; background: #fff; transition: border-color .15s, background .15s, transform .15s; }
+.customer-form-card .menu.selected { border-color: #087437; background: #eef8e9; box-shadow: inset 4px 0 #087437; }
+.quantity-stepper { display: grid; grid-template-columns: 34px 42px 34px; align-items: center; justify-content: end; overflow: hidden; border: 1px solid #b8bea6; border-radius: 7px; background: #fff; }
+.quantity-stepper button { width: 34px; height: 38px; display: grid; place-items: center; padding: 0; border: 0; color: #064d2b; background: #edf4e9; }
+.quantity-stepper button svg { width: 15px; }
+.customer-form-card .quantity-stepper input { width: 42px; min-height: 38px; padding: 0; border: 0; border-inline: 1px solid #d8ddcf; border-radius: 0; text-align: center; appearance: textfield; }
+.quantity-stepper input::-webkit-inner-spin-button { appearance: none; }
+.order-summary { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 18px; border: 1px dashed #b59c28; border-radius: 8px; background: #fff3af; }
+.order-summary span { color: #536653; font-size: .7rem; }
+.order-summary span b { color: #d91f1f; }
+.order-summary strong { color: #064d2b; font: 800 1.15rem Fraunces, serif; }
+.customer-submit { display: flex; justify-content: space-between; align-items: center; min-height: 54px; font-size: .78rem; }
+.customer-submit span { font-size: 1.2rem; }
+
+@media (max-width: 700px) {
+  .customer-header { height: 66px; padding-inline: 16px; }
+  .customer-logo > span { width: 40px; height: 40px; font-size: 1.35rem; }
+  .customer-logo b { font-size: .95rem; }
+  .customer-hero { min-height: auto; }
+  .customer-hero-copy { padding: 38px 20px 42px; }
+  .customer-hero-art { min-height: 190px; }
+  .customer-intro { padding-top: 38px; }
+  .customer-choice { min-height: 150px; box-shadow: 5px 5px 0 #17301f; }
+  .customer-choice:nth-child(2) { box-shadow: 5px 5px 0 #d91f1f; }
+  .customer-form-page { margin-top: 14px; padding-inline: 12px; }
+  .customer-form-banner { min-height: 140px; border-radius: 10px 10px 0 0; }
+  .customer-form-card { border-radius: 0 0 10px 10px; }
+  .customer-form-card .menu-list { grid-template-columns: 1fr; }
+  .customer-form-card .menu { grid-template-columns: minmax(0, 1fr) auto; }
+  .evaluation-guide { grid-template-columns: 1fr; padding: 20px; }
+  .evaluation-guide > svg { width: 48px; height: 48px; }
+  .evaluation-item { grid-template-columns: 1fr; padding: 18px; }
+  .evaluation-actions { flex-wrap: wrap; }
+  .evaluation-actions button { flex: 1 1 auto; justify-content: center; }
+  .learning-form { grid-template-columns: 1fr; }
+  .admin-sidebar nav button { padding-inline: 2px; font-size: .5rem; gap: 2px; }
+  .admin-sidebar nav button svg { width: 16px; }
+}
+
+@media (max-width: 380px) {
+  .customer-header { padding-inline: 12px; }
+  .customer-choice { padding: 16px 14px; }
+  .quantity-stepper { grid-template-columns: 32px 38px 32px; }
+  .quantity-stepper button { width: 32px; }
+  .customer-form-card .quantity-stepper input { width: 38px; }
+  .admin-sidebar nav button { font-size: 0; }
 }
 
 /* Sambal Joelid brand system — warm warung energy, built for focused operations */
@@ -437,3 +521,20 @@ main:has(.customer-page) { max-width: none; padding: 0; }
 .settings-row select { padding: 8px 10px; border: 1px solid #cfc7bc; border-radius: 6px; font-size: .74rem; background: #fff; color: #17301f; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
 .settings-actions .ghost { background: #fff; color: #17301f; border: 1px solid #cfc7bc; }
+
+/* Final storefront layout overrides */
+.customer-header { position: sticky; z-index: 10; top: 0; height: 76px; box-shadow: 0 4px 0 #ffd51b; }
+.customer-hero { min-height: min(620px, calc(100vh - 76px)); }
+.customer-choice { border-radius: 8px; box-shadow: 7px 7px 0 #17301f; }
+.customer-choice:nth-child(2) { box-shadow: 7px 7px 0 #d91f1f; }
+.customer-form-page { max-width: 980px; }
+.customer-form-card .menu-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; border: 0; }
+.customer-form-card .menu { grid-template-columns: minmax(0, 1fr) auto; min-height: 82px; padding: 13px; border: 1px solid #d9d0b8; border-radius: 9px; background: #fff; }
+.customer-form-card .menu.selected { border-color: #087437; background: #eef8e9; box-shadow: inset 4px 0 #087437; }
+.customer-form-card .quantity-stepper input { width: 42px; min-width: 0; min-height: 38px; padding: 0; border: 0; border-inline: 1px solid #d8ddcf; border-radius: 0; text-align: center; }
+@media (max-width: 700px) {
+  .customer-header { height: 66px; padding-inline: 16px; }
+  .customer-hero { min-height: auto; }
+  .customer-hero-art { min-height: 190px; }
+  .customer-form-card .menu-list { grid-template-columns: 1fr; }
+}
