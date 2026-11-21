@@ -18,6 +18,7 @@ import { CatalogService } from './services/catalog.js';
 import { IncomingPipeline, verifyWebhookSignature } from './webhook.js';
 import { MenuMatcher } from './menuMatcher.js';
 import { LLMClient } from './llm.js';
+import { MultiAccountGroqProvider, HybridLLMOrchestrator } from './services/llmPool.js';
 import { BotHandler } from './bot.js';
 import { TemplateStore } from './templates.js';
 import { StateStore } from './state.js';
@@ -35,7 +36,13 @@ const env = {
   aiBaseUrl: process.env.AI_BASE_URL || 'http://127.0.0.1:8080/v1',
   aiModel: process.env.AI_MODEL || 'qwen2.5-1.5b-instruct',
   aiApiKey: process.env.AI_API_KEY || '',
-  aiTimeoutMs: Number(process.env.AI_TIMEOUT_MS || 25000),
+  aiTimeoutMs: Number(process.env.AI_TIMEOUT_MS || 90000),
+  groqEnabled: String(process.env.GROQ_ENABLED || 'true').toLowerCase() === 'true',
+  groqApiKeys: (process.env.GROQ_API_KEYS || '').split(',').map(s => s.trim()).filter(Boolean),
+  groqModel: process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
+  groqBaseUrl: process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
+  groqTimeoutMs: Number(process.env.GROQ_TIMEOUT_MS || 12000),
+  groqCooldownMs: Number(process.env.GROQ_COOLDOWN_SECONDS || 60) * 1000,
   whatsappDebounceMs: Number(process.env.WHATSAPP_DEBOUNCE_MS || 4000),
   llmHealthCheckMs: Number(process.env.LLM_HEALTH_CHECK_MS || 120000),
   replyDelayMinMs: Number(process.env.WHATSAPP_REPLY_DELAY_MIN_MS || 1000),
@@ -67,11 +74,25 @@ const catalog = new CatalogService({ url: env.catalogUrl, ttlMs: env.catalogTtlM
 const menuMatcher = new MenuMatcher({ getMenus: () => catalog.getMenus() });
 const templates = new TemplateStore(db);
 const stateStore = new StateStore(db);
-const llm = new LLMClient({
+const localLlm = new LLMClient({
   baseUrl: env.aiBaseUrl,
   model: env.aiModel,
   apiKey: env.aiApiKey,
   timeoutMs: env.aiTimeoutMs,
+});
+
+const groqProvider = new MultiAccountGroqProvider({
+  apiKeys: env.groqApiKeys,
+  model: env.groqModel,
+  baseUrl: env.groqBaseUrl,
+  timeoutMs: env.groqTimeoutMs,
+  cooldownMs: env.groqCooldownMs,
+});
+
+const llm = new HybridLLMOrchestrator({
+  localClient: localLlm,
+  groqProvider,
+  preferGroq: env.groqEnabled,
 });
 const messageLogger = new MessageLogger(db);
 const bot = new BotHandler({
@@ -261,9 +282,13 @@ api.post('/admin/failed-messages/:id/testset', auth, (req, res) => {
   if (!failed) return res.sendStatus(404);
   const directory = path.dirname(env.testSetPath);
   fs.mkdirSync(directory, { recursive: true });
-  fs.appendFileSync(env.testSetPath, `${JSON.stringify({ pesan: failed.raw, intent: '', items: [] })}\n`, 'utf8');
+
+  const intent = typeof req.body?.intent === 'string' ? req.body.intent : '';
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+
+  fs.appendFileSync(env.testSetPath, `${JSON.stringify({ pesan: failed.raw, intent, items })}\n`, 'utf8');
   messageLogger.resolve(failed.id);
-  res.json({ appended: true, path: env.testSetPath });
+  res.json({ appended: true, path: env.testSetPath, intent, items });
 });
 api.post('/public/orders', publicLimiter, validate(orderInput), (req, res) => {
   const create = db.transaction((input) => {

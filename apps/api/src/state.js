@@ -1,6 +1,16 @@
 // State percakapan per nomor, disimpan di DB agar aman saat restart.
 
-export const BOT_STATES = ['IDLE', 'PILIH_MENU', 'KONFIRMASI', 'ALAMAT_ATAU_AMBIL', 'SELESAI', 'HANDOFF'];
+export const BOT_STATES = [
+  'IDLE',
+  'MENU_UTAMA',
+  'PILIH_MENU',
+  'KONFIRMASI',
+  'ALAMAT_ATAU_AMBIL',
+  'KELUHAN_DESKRIPSI',
+  'KELUHAN_NAMA',
+  'SELESAI',
+  'HANDOFF',
+];
 export const STALE_MINUTES = 30;
 
 export function emptyDraft() {

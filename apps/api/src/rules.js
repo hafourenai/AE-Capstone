@@ -29,7 +29,7 @@ export const BATAL = new Set([
 ]);
 
 export const MENU = [
-  'menu', 'daftar menu', 'list menu', 'lihat menu', 'menu apa', 'ada menu apa',
+  'daftar menu', 'list menu', 'lihat menu', 'menu apa', 'ada menu apa',
   'menu nya apa', 'menunya apa', 'pilihan menu', 'daftar harga', 'harga menu',
   'berapa harganya', 'harganya berapa',
 ];
@@ -68,7 +68,7 @@ export function matchRule(norm) {
   if (!norm) return null;
   if (ADMIN.some((phrase) => hasPhrase(norm, phrase))) return { type: 'admin' };
   if (BATAL.has(norm) || [...BATAL].some((phrase) => phrase.includes(' ') && hasPhrase(norm, phrase))) return { type: 'batal' };
-  if (MENU.some((phrase) => hasPhrase(norm, phrase))) return { type: 'menu' };
+  if (norm === 'menu' || MENU.some((phrase) => hasPhrase(norm, phrase))) return { type: 'menu' };
   if (JAM.some((phrase) => hasPhrase(norm, phrase))) return { type: 'jam' };
   if (LOKASI.some((phrase) => hasPhrase(norm, phrase))) return { type: 'lokasi' };
   if (SETUJU.has(norm)) return { type: 'setuju' };

@@ -43,9 +43,83 @@ export class BotHandler {
 
     if (rule?.type === 'admin') return this.handoff(session);
     if (rule?.type === 'batal') return this.cancel(session);
-    if (rule?.type === 'menu') return this.menu(session, menus);
     if (rule?.type === 'jam') return this.jam(session, settings);
     if (rule?.type === 'lokasi') return this.lokasi(session, settings);
+
+    // Menu utama deterministik:
+    // Jika pelanggan berada di state IDLE dan mengirim angka 1, 2, atau 3
+    if (session.botState === 'IDLE') {
+      if (norm === '1') {
+        session.botState = 'PILIH_MENU';
+        session.failCount = 0;
+        this.save(session);
+        return this.out(this.templates.render('tanya_menu'), 'rules', 'pesan');
+      }
+      if (norm === '2') {
+        session.draft.kind = 'complaint';
+        session.botState = 'KELUHAN_DESKRIPSI';
+        session.failCount = 0;
+        this.save(session);
+        return this.out(this.templates.render('tanya_keluhan'), 'rules', 'keluhan');
+      }
+      if (norm === '3') {
+        return this.handoff(session);
+      }
+      if (rule?.type === 'sapaan') {
+        session.botState = 'MENU_UTAMA';
+        session.failCount = 0;
+        this.save(session);
+        return this.out(this.templates.render('menu_utama'), 'rules', 'menu_utama');
+      }
+    }
+
+    if (session.botState === 'MENU_UTAMA') {
+      if (norm === '1') {
+        session.botState = 'PILIH_MENU';
+        session.failCount = 0;
+        this.save(session);
+        return this.out(this.templates.render('tanya_menu'), 'rules', 'pesan');
+      }
+      if (norm === '2') {
+        session.draft.kind = 'complaint';
+        session.botState = 'KELUHAN_DESKRIPSI';
+        session.failCount = 0;
+        this.save(session);
+        return this.out(this.templates.render('tanya_keluhan'), 'rules', 'keluhan');
+      }
+      if (norm === '3') {
+        return this.handoff(session);
+      }
+      if (rule?.type === 'menu') return this.menu(session, menus);
+      if (rule?.type === 'mau_pesan') return this.tanyaMenu(session);
+
+      // Pilihan angka lain atau input di MENU_UTAMA
+      return this.out(this.templates.render('pilihan_tidak_valid'), 'rules', 'menu_utama');
+    }
+
+    // State keluhan langkah 1: menerima deskripsi keluhan
+    if (session.botState === 'KELUHAN_DESKRIPSI') {
+      session.draft.kind = 'complaint';
+      session.draft.description = raw;
+      session.botState = 'KELUHAN_NAMA';
+      session.failCount = 0;
+      this.save(session);
+      return this.out(this.templates.render('tanya_nama_keluhan'), 'rules', 'keluhan');
+    }
+
+    // State keluhan langkah 2: menerima nama pelapor
+    if (session.botState === 'KELUHAN_NAMA') {
+      session.draft.customerName = raw;
+      session.botState = 'KONFIRMASI';
+      session.failCount = 0;
+      this.save(session);
+      return this.out(this.templates.render('keluhan_konfirmasi', {
+        nama: session.draft.customerName,
+        keluhan: session.draft.description,
+      }), 'rules', 'keluhan');
+    }
+
+    if (rule?.type === 'menu') return this.menu(session, menus);
     if (rule?.type === 'sapaan') return this.sapaan(session);
     if (rule?.type === 'mau_pesan') return this.tanyaMenu(session);
 
@@ -364,9 +438,13 @@ export class BotHandler {
 
     if (draft.kind === 'complaint') {
       try {
-        const complaint = this.bridge.createComplaint(session.conversationId, draft.customerName || 'Pelanggan', phone, draft.branchId || null, null, draft.description);
+        const customerName = draft.customerName || 'Pelanggan';
+        const complaint = this.bridge.createComplaint(session.conversationId, customerName, phone, draft.branchId || null, null, draft.description);
         this.state.reset(session.conversationId);
-        return this.out(this.templates.render('keluhan_sukses', { referensi: complaint.reference }), 'rules', 'keluhan');
+        return this.out(this.templates.render('keluhan_sukses', {
+          referensi: complaint.reference,
+          nama: customerName,
+        }), 'rules', 'keluhan');
       } catch (error) {
         this.logger.error?.(`[bot] Gagal simpan keluhan: ${error.message}`);
         return this.handoff(session);

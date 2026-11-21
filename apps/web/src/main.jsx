@@ -451,13 +451,17 @@ function CatalogSettings({ token, onError }) {
 
   const sendToTestSet = async (item) => {
     try {
+      const intentInput = window.prompt(`Masukkan intent yang benar untuk pesan:\n"${item.raw}"\n\nContoh: pesan / keluhan / tanya_menu / tanya_jam / tanya_lokasi / bicara_admin`, 'pesan');
+      if (intentInput === null) return; // Dibatalkan oleh admin
+
       setSaving(true);
       await request(`/admin/failed-messages/${item.id}/testset`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ intent: intentInput.trim() }),
       });
       await load();
-      flash('Pesan ditambahkan ke test set.');
+      flash('Pesan berhasil diberi label & ditambahkan ke test set evaluasi.');
     } catch (error) { onError(error.message); } finally { setSaving(false); }
   };
 
@@ -525,7 +529,7 @@ function CatalogSettings({ token, onError }) {
               </div>
                 <div className="settings-row-fields">
                   <div className="settings-actions">
-                  <button type="button" onClick={() => sendToTestSet(item)} disabled={saving}>Ke test set</button>
+                  <button type="button" onClick={() => sendToTestSet(item)} disabled={saving} title="Beri label intent dan simpan ke dataset evaluasi lokal">Beri label &amp; simpan</button>
                   <button type="button" className="ghost" onClick={() => resolveFailed(item)} disabled={saving}>Tandai selesai</button>
                 </div>
               </div>
