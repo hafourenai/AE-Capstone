@@ -11,6 +11,7 @@ const FILLER_WORDS = new Set([
   'bapak', 'kak', 'kakak', 'min', 'dong', 'ya', 'nih', 'itu', 'ini', 'yang',
   'untuk', 'buat', 'dengan', 'sama', 'dan', 'juga', 'aja', 'saja', 'tolong',
   'minta', 'pingin', 'pengen', 'ingin', 'seporsi', 'porsi', 'nya', 'sih', 'deh',
+  'ny', 'lagi', 'lg', 'tambah', 'tambahkan',
 ]);
 
 const QUANTITY_WORDS = new Set([
@@ -38,6 +39,7 @@ export function cleanSegment(segment) {
   const words = String(segment ?? '')
     .split(/\s+/)
     .filter(Boolean)
+    .map((word) => word.length > 5 && word.endsWith('nya') ? word.slice(0, -3) : word)
     .filter((word) => !/^\d+$/.test(word))
     .filter((word) => !FILLER_WORDS.has(word))
     .filter((word) => !QUANTITY_WORDS.has(word));
@@ -63,7 +65,10 @@ export function buildFuse(menus, threshold = FUZZY_THRESHOLD) {
   if (!entries.length) return null;
   return new Fuse(entries, {
     keys: ['alias'],
-    threshold,
+    // Pencarian dibuat lebih lebar untuk menyediakan kandidat typo ke LLM.
+    // Keputusan deterministik tetap memakai `threshold` yang lebih ketat di
+    // matchMenusWithFuse, jadi hasil samar tidak langsung dianggap pesanan.
+    threshold: Math.max(threshold, CANDIDATE_SCORE),
     ignoreLocation: true,
     includeScore: true,
     minMatchCharLength: 2,
@@ -91,7 +96,15 @@ export function matchMenusWithFuse(normText, fuse, { limit = 5, threshold = FUZZ
     if (!query) continue;
     searchable.push({ segment, query });
 
-    const results = fuse.search(query).filter((result) => result.score <= threshold);
+    const broadResults = fuse.search(query).filter((result) => result.score <= CANDIDATE_SCORE);
+    const results = broadResults.filter((result) => result.score <= threshold);
+    for (const result of broadResults) {
+      const id = result.item.menuId;
+      const candidate = candidateScores.get(id);
+      if (!candidate || result.score < candidate.score) {
+        candidateScores.set(id, { menu: result.item.menu, score: result.score });
+      }
+    }
     if (!results.length) continue;
 
     // Skor terbaik per menu (satu menu bisa punya beberapa alias).

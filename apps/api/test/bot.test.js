@@ -21,6 +21,13 @@ const AMBIGUOUS_MENUS = [
   { id: 'es-jeruk', name: 'Es Jeruk', price: 7000, stock: 20, active: true, aliases: ['es'], description: '' },
 ];
 
+const ORDER_MENUS = [
+  { id: 'jeruk-ayam', name: 'Paket Es Jeruk Ayam', price: 25000, stock: 20, active: true, aliases: ['es jeruk ayam'], description: '' },
+  { id: 'jeruk-nila', name: 'Paket Es Jeruk Nila', price: 27000, stock: 20, active: true, aliases: ['es jeruk nila'], description: '' },
+  { id: 'mie-goreng', name: 'Paket Mie Goreng', price: 18000, stock: 20, active: true, aliases: ['mie goreng'], description: '' },
+  { id: 'ayam-bakar', name: 'Ayam Bakar', price: 20000, stock: 20, active: true, aliases: [], description: '' },
+];
+
 function setup(t, { menus = MENUS, llm } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sambal-joelid-bot-'));
   const db = openDatabase(path.join(directory, 'test.sqlite'));
@@ -151,6 +158,24 @@ test('bot: LLM hanya diminta Item, backend tetap menghitung harga', async (t) =>
   assert.match(result.reply, /cabang mana/i);
 });
 
+test('bot: typo menu diteruskan ke Groq/LLM dengan kandidat katalog yang relevan', async (t) => {
+  let receivedCandidates = [];
+  const llm = {
+    extract: async (_message, options) => {
+      receivedCandidates = options.candidates;
+      return {
+        ok: true,
+        needsClarification: false,
+        data: { intent: 'pesan', items: [{ menu: 'Paket Mie Goreng', qty: 2 }], waktu: '', keluhan: '' },
+      };
+    },
+  };
+  const { bot, state, conversationId } = setup(t, { menus: ORDER_MENUS, llm });
+  await bot.handle({ conversationId, phone: '628111', raw: 'mi gorng 2' });
+  assert.ok(receivedCandidates.includes('Paket Mie Goreng'));
+  assert.deepEqual(state.get(conversationId).draft.items, [{ menuId: 'mie-goreng', qty: 2 }]);
+});
+
 test('bot: LLM OFFLINE langsung handoff tanpa mencoba memanggil LLM', async (t) => {
   let called = 0;
   const llm = {
@@ -190,6 +215,54 @@ test('bot: batal dari state mana pun menghapus draft', async (t) => {
   const session = state.get(conversationId);
   assert.equal(session.botState, 'IDLE');
   assert.deepEqual(session.draft.items, []);
+});
+
+test('bot: pesanan informal multi-item mempertahankan qty dan jawaban varian pendek', async (t) => {
+  const { bot, state, conversationId } = setup(t, { menus: ORDER_MENUS });
+
+  const clarify = await bot.handle({
+    conversationId,
+    phone: '628111',
+    raw: 'paket es jeruk ny 3 sm paket mie goreng ny 2',
+  });
+  assert.match(clarify.reply, /Ayam|Nila/);
+  assert.deepEqual(state.get(conversationId).draft.items, [{ menuId: 'mie-goreng', qty: 2 }]);
+
+  const selected = await bot.handle({ conversationId, phone: '628111', raw: 'ayam' });
+  assert.match(selected.reply, /cabang mana/i);
+  assert.deepEqual(state.get(conversationId).draft.items, [
+    { menuId: 'mie-goreng', qty: 2 },
+    { menuId: 'jeruk-ayam', qty: 3 },
+  ]);
+});
+
+test('bot: tambah item dan pembatalan parsial tidak mereset draft lain', async (t) => {
+  const { bot, state, conversationId } = setup(t, { menus: ORDER_MENUS });
+  await bot.handle({ conversationId, phone: '628111', raw: 'es jeruk ayam 3' });
+  await bot.handle({ conversationId, phone: '628111', raw: 'tambah mie goreng 2' });
+
+  let session = state.get(conversationId);
+  assert.deepEqual(session.draft.items, [
+    { menuId: 'jeruk-ayam', qty: 3 },
+    { menuId: 'mie-goreng', qty: 2 },
+  ]);
+
+  const removed = await bot.handle({ conversationId, phone: '628111', raw: 'mie gorengnya batal' });
+  assert.match(removed.reply, /Mie Goreng.*batalkan/i);
+  session = state.get(conversationId);
+  assert.deepEqual(session.draft.items, [{ menuId: 'jeruk-ayam', qty: 3 }]);
+});
+
+test('bot: batal semua menghapus seluruh draft dan woi admin memicu handoff', async (t) => {
+  const first = setup(t, { menus: ORDER_MENUS });
+  await first.bot.handle({ conversationId: first.conversationId, phone: '628111', raw: 'mie goreng 2' });
+  await first.bot.handle({ conversationId: first.conversationId, phone: '628111', raw: 'batal semua' });
+  assert.deepEqual(first.state.get(first.conversationId).draft.items, []);
+
+  const second = setup(t, { menus: ORDER_MENUS });
+  const handoff = await second.bot.handle({ conversationId: second.conversationId, phone: '628111', raw: 'woi admin' });
+  assert.equal(handoff.handoff, true);
+  assert.equal(second.state.get(second.conversationId).botState, 'HANDOFF');
 });
 
 test('bot: jam buka dan lokasi diambil dari pengaturan DB', async (t) => {

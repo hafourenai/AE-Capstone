@@ -25,7 +25,7 @@ export const SETUJU = new Set([
 
 export const BATAL = new Set([
   'batal', 'cancel', 'gajadi', 'tidak jadi', 'tidak usah', 'stop', 'hapus semua',
-  'tidak jadi pesan', 'tidak jadi order', 'gajadi pesan', 'batal pesan',
+  'tidak jadi pesan', 'tidak jadi order', 'gajadi pesan', 'batal pesan', 'batal semua',
 ]);
 
 export const MENU = [
@@ -49,7 +49,8 @@ export const LOKASI = [
 export const ADMIN = [
   'admin', 'telepon', 'telpon', 'bicara orang', 'cs', 'customer service',
   'hubungi admin', 'mau ke admin', 'orang asli', 'manusia', 'staff', 'staf',
-  'ngobrol sama orang', 'bicara dengan orang',
+  'ngobrol sama orang', 'bicara dengan orang', 'operator', 'panggil staf',
+  'sambungkan ke admin', 'mau ngomong sama orang',
 ];
 
 function padded(text) {

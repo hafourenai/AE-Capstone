@@ -2,7 +2,7 @@ import { normalize } from './normalize.js';
 import { matchRule, matchStateRule } from './rules.js';
 import { extractQuantity } from './menuMatcher.js';
 import { resolveBranch } from './services/cartManager.js';
-import { addDraftItem, clearDraft, emptyDraft } from './state.js';
+import { addDraftItem, clearDraft, removeDraftItem } from './state.js';
 import { formatMenuList, formatRupiah } from './templates.js';
 
 const NAME_BLOCKLIST = new Set([
@@ -42,6 +42,14 @@ export class BotHandler {
     const rule = matchRule(norm);
 
     if (rule?.type === 'admin') return this.handoff(session);
+
+    // Bedakan pembatalan seluruh order dengan pembatalan satu menu.
+    // "mie gorengnya batal" tidak boleh menghapus item lain.
+    const partialCancellation = this.isPartialCancellation(norm);
+    if (partialCancellation) {
+      const result = await this.removeMentionedItems(session, norm, menus);
+      if (result) return result;
+    }
     if (rule?.type === 'batal') return this.cancel(session);
     if (rule?.type === 'jam') return this.jam(session, settings);
     if (rule?.type === 'lokasi') return this.lokasi(session, settings);
@@ -131,14 +139,18 @@ export class BotHandler {
     if (session.draft.options?.length) {
       const choice = this.pickOption(norm, session.draft.options);
       if (choice) {
-        const qty = extractQuantity(norm);
+        const qty = extractQuantity(norm) || session.draft.pendingOptionQty;
         if (qty) {
           addDraftItem(session.draft, { menuId: choice.id, qty });
+          session.draft.lastMenuId = choice.id;
           session.draft.options = [];
+          session.draft.pendingOptionQty = null;
           return this.advance(session, menus, branches);
         }
         session.draft.pendingMenuId = choice.id;
+        session.draft.lastMenuId = choice.id;
         session.draft.options = [];
+        session.draft.pendingOptionQty = null;
         session.botState = 'PILIH_MENU';
         this.save(session);
         return this.out(this.templates.render('tanya_jumlah', { menu: choice.name }), 'fuzzy', 'pesan');
@@ -151,9 +163,42 @@ export class BotHandler {
       if (stateRule?.type === 'quantity') {
         const menu = menus.find((item) => item.id === session.draft.pendingMenuId);
         session.draft.pendingMenuId = null;
-        if (menu) addDraftItem(session.draft, { menuId: menu.id, qty: stateRule.qty });
+        if (menu) {
+          addDraftItem(session.draft, { menuId: menu.id, qty: stateRule.qty });
+          session.draft.lastMenuId = menu.id;
+        }
         return this.advance(session, menus, branches);
       }
+    }
+
+    // Perubahan singkat merujuk ke menu terakhir yang sedang dibahas.
+    const contextualUpdate = this.applyContextualQuantityUpdate(session, norm, menus, branches);
+    if (contextualUpdate) return contextualUpdate;
+
+    // Proses menu sebelum menganggap pesan sebagai jawaban cabang/nama. Dengan
+    // demikian "tambah mie goreng 2" tetap mengubah draft pada state apa pun.
+    const match = await this.matcher.search(norm);
+    if (match.status === 'ambiguous') {
+      for (const item of match.matches) {
+        if (item.qty) {
+          this.putMatchedItem(session, item, norm);
+        }
+      }
+      return this.askClarify(session, match.ambiguous[0]);
+    }
+    if (match.status === 'match') {
+      const missingQty = match.matches.find((item) => !item.qty);
+      for (const item of match.matches) {
+        if (item.qty) this.putMatchedItem(session, item, norm);
+      }
+      if (missingQty) {
+        session.draft.pendingMenuId = missingQty.menu.id;
+        session.draft.lastMenuId = missingQty.menu.id;
+        session.botState = 'PILIH_MENU';
+        this.save(session);
+        return this.out(this.templates.render('tanya_jumlah', { menu: missingQty.menu.name }), 'fuzzy', 'pesan');
+      }
+      return this.advance(session, menus, branches);
     }
 
     // Sedang mengumpulkan cabang/nama.
@@ -168,23 +213,6 @@ export class BotHandler {
       let learnedItems = [];
       try { learnedItems = JSON.parse(learned.items_json || '[]'); } catch { learnedItems = []; }
       return this.applyLearned(session, raw, learned.intent, learnedItems, menus, branches);
-    }
-
-    // Lapisan 2: fuzzy menu.
-    const match = await this.matcher.search(norm);
-    if (match.status === 'ambiguous') return this.askClarify(session, match.ambiguous[0]);
-    if (match.status === 'match') {
-      const missingQty = match.matches.find((item) => !item.qty);
-      for (const item of match.matches) {
-        if (item.qty) addDraftItem(session.draft, { menuId: item.menu.id, qty: item.qty });
-      }
-      if (missingQty) {
-        session.draft.pendingMenuId = missingQty.menu.id;
-        session.botState = 'PILIH_MENU';
-        this.save(session);
-        return this.out(this.templates.render('tanya_jumlah', { menu: missingQty.menu.name }), 'fuzzy', 'pesan');
-      }
-      return this.advance(session, menus, branches);
     }
 
     // Lapisan 3: LLM.
@@ -313,6 +341,7 @@ export class BotHandler {
     const options = ambiguous.options.slice(0, 2);
     session.draft.options = options.map((menu) => ({ id: menu.id, name: menu.name }));
     session.draft.pendingMenuId = null;
+    session.draft.pendingOptionQty = extractQuantity(ambiguous.segment);
     session.botState = 'PILIH_MENU';
     session.failCount = 0;
     this.save(session);
@@ -323,10 +352,87 @@ export class BotHandler {
   }
 
   pickOption(norm, options) {
-    return options.find((option) => {
+    const exact = options.find((option) => {
       const name = normalize(option.name);
       return norm === name || norm.includes(name);
-    }) || null;
+    });
+    if (exact) return exact;
+
+    // Jawaban seperti "ayam" dipilih dari token yang membedakan opsi
+    // "Paket Es Jeruk Ayam" dan "Paket Es Jeruk Nila".
+    const replyTokens = new Set(norm.split(' ').filter((token) => token.length > 1));
+    const scored = options.map((option) => {
+      const own = new Set(normalize(option.name).split(' '));
+      const otherTokens = new Set(options.filter((item) => item.id !== option.id)
+        .flatMap((item) => normalize(item.name).split(' ')));
+      const uniqueHits = [...own].filter((token) => replyTokens.has(token) && !otherTokens.has(token)).length;
+      return { option, uniqueHits };
+    }).sort((a, b) => b.uniqueHits - a.uniqueHits);
+    return scored[0]?.uniqueHits > 0 && scored[0].uniqueHits > (scored[1]?.uniqueHits || 0)
+      ? scored[0].option
+      : null;
+  }
+
+  isPartialCancellation(norm) {
+    const hasCancel = /\b(batalin|batalkan|batal|cancel|tidak jadi|hapus)\b/.test(norm);
+    if (!hasCancel) return false;
+    return !/^(batal|cancel|tidak jadi|tidak usah|stop|hapus semua|batal semua)( pesan| order)?$/.test(norm);
+  }
+
+  async removeMentionedItems(session, norm, menus) {
+    const query = norm
+      .replace(/\b(batalin|batalkan|batal|cancel|tidak jadi|hapus)\b/g, ' ')
+      .replace(/\b(yang|nya)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!query) return null;
+    const match = await this.matcher.search(query);
+    const ids = match.matches.map((item) => item.menu.id);
+    if (!ids.length && match.status === 'ambiguous') return this.askClarify(session, match.ambiguous[0]);
+    const existingIds = ids.filter((id) => session.draft.items.some((item) => item.menuId === id));
+    if (!existingIds.length) return null;
+    for (const id of existingIds) removeDraftItem(session.draft, id);
+    session.draft.pendingMenuId = null;
+    session.draft.options = [];
+    session.draft.lastMenuId = session.draft.items.at(-1)?.menuId || null;
+    session.botState = session.draft.items.length ? session.botState : 'PILIH_MENU';
+    session.failCount = 0;
+    this.save(session);
+    const removed = existingIds.map((id) => menus.find((menu) => menu.id === id)?.name).filter(Boolean).join(', ');
+    const remaining = session.draft.items.map((item) => {
+      const menu = menus.find((candidate) => candidate.id === item.menuId);
+      return menu ? `${item.qty}x ${menu.name}` : null;
+    }).filter(Boolean);
+    const suffix = remaining.length ? ` Sisa pesanan: ${remaining.join(', ')}.` : ' Pesananmu sekarang kosong.';
+    return this.out(`Siap, Kak. ${removed} aku batalkan.${suffix}`, 'rules', 'ubah_pesanan');
+  }
+
+  putMatchedItem(session, item, norm) {
+    const existing = session.draft.items.find((draftItem) => draftItem.menuId === item.menu.id);
+    if (/\b(tambah|tambahkan)\b/.test(norm) && existing) {
+      existing.qty = Math.min(50, existing.qty + item.qty);
+    } else {
+      addDraftItem(session.draft, { menuId: item.menu.id, qty: item.qty });
+    }
+    session.draft.lastMenuId = item.menu.id;
+  }
+
+  applyContextualQuantityUpdate(session, norm, menus, branches) {
+    const menuId = session.draft.pendingMenuId || session.draft.lastMenuId;
+    if (!menuId) return null;
+    const existing = session.draft.items.find((item) => item.menuId === menuId);
+    const qty = extractQuantity(norm);
+    if (!qty) return null;
+    if (/^(tambah|tambahkan)\s+\d+\s*(lagi|lg)?$/.test(norm) && existing) {
+      existing.qty = Math.min(50, existing.qty + qty);
+    } else if (/^jadi\s+\d+$/.test(norm) && existing) {
+      existing.qty = qty;
+    } else {
+      return null;
+    }
+    session.draft.pendingMenuId = null;
+    session.draft.lastMenuId = menuId;
+    return this.advance(session, menus, branches);
   }
 
   collectBranchOrName(session, norm, raw, branches, menus) {

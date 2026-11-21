@@ -59,7 +59,7 @@ export function predictOffline(message, menus) {
   const match = matchMenus(norm, menus);
   if (match.status === 'match') {
     return {
-      intent: 'pesan',
+      intent: /\b(tambah|tambahkan|ganti|ubah|hapus|batalin)\b/.test(norm) ? 'ubah_pesanan' : 'pesan',
       items: match.matches.map((entry) => ({ menu: entry.menu.name, qty: entry.qty || 1 })),
       layer: 'fuzzy',
     };

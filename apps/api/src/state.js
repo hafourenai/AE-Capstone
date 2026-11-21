@@ -20,6 +20,8 @@ export function emptyDraft() {
     branchId: '',
     notes: '',
     pendingMenuId: null,
+    pendingOptionQty: null,
+    lastMenuId: null,
     options: [],
     kind: 'order',
     description: '',

@@ -63,6 +63,13 @@ test('matcher: kandidat untuk LLM dibatasi dan unik', () => {
   assert.equal(new Set(result.candidates.map((menu) => menu.id)).size, result.candidates.length);
 });
 
+test('matcher: typo moderat diteruskan sebagai kandidat LLM, bukan langsung ditebak', () => {
+  const menus = [{ id: 'mie', name: 'Paket Mie Goreng', active: true, stock: 10, aliases: [] }];
+  const result = matchMenus('mie goring 2', menus);
+  assert.equal(result.status, 'none');
+  assert.deepEqual(result.candidates.map((menu) => menu.id), ['mie']);
+});
+
 test('utility: splitSegments, cleanSegment, extractQuantity', () => {
   assert.deepEqual(splitSegments('gdg 2 sama teh 1'), ['gdg 2', 'teh 1']);
   assert.equal(cleanSegment('pesen gdg 2'), 'gdg');
