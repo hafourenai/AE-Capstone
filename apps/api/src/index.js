@@ -2,7 +2,6 @@ import 'dotenv/config';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
@@ -47,7 +46,8 @@ const env = {
   llmHealthCheckMs: Number(process.env.LLM_HEALTH_CHECK_MS || 120000),
   replyDelayMinMs: Number(process.env.WHATSAPP_REPLY_DELAY_MIN_MS || 1000),
   replyDelayMaxMs: Number(process.env.WHATSAPP_REPLY_DELAY_MAX_MS || 3000),
-  testSetPath: process.env.TEST_SET_PATH || fileURLToPath(new URL('../test/eval/testset.jsonl', import.meta.url)),
+  // Data berlabel dari dashboard adalah data runtime, bukan fixture test yang dilacak Git.
+  testSetPath: process.env.TEST_SET_PATH || './data/admin-labeled-testset.jsonl',
   whatsappRateWindowMs: Number(process.env.WHATSAPP_RATE_LIMIT_WINDOW_SECONDS || 60) * 1000,
   whatsappRateMax: Number(process.env.WHATSAPP_RATE_LIMIT_MAX_MESSAGES || 8),
   whatsappRetentionDays: Number(process.env.WHATSAPP_MESSAGE_RETENTION_DAYS || 30),

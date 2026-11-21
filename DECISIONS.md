@@ -52,7 +52,8 @@ dan langsung handoff saat keduanya tidak cukup. Status tampil di
 ### D8. Logging dan pesan gagal
 Semua pesan dicatat di `wa_message_logs` (layer, intent, hasil, durasi). Pesan yang
 berakhir di fallback/handoff disalin ke `failed_messages` agar bisa dijadikan alias
-menu atau dikirim ke `test/eval/testset.jsonl` dari dashboard. Tabel dipangkas
+menu atau dikirim ke dataset runtime melalui `TEST_SET_PATH` dari dashboard. Fixture
+`test/eval/testset.jsonl` hanya digunakan untuk evaluasi saat development. Tabel dipangkas
 mengikuti retensi pesan WhatsApp (30 hari).
 
 ### D9. Voice note tidak ditranskripsi pada refactor ini
