@@ -151,7 +151,7 @@ function Customer({ mode, setMode }) {
     <div className="customer-page">
       <header className="customer-header">
         <button className="customer-logo" onClick={() => { setSent(null); navigate('home'); }} aria-label="Ke beranda Sambal Joelid">
-          <span><video src="/sambal_joelid_motion.mp4" autoPlay loop muted playsInline aria-label="Logo Sambal Joelid" /></span><b>SAMBAL<br />JOELID</b>
+          <span><img src="/logo_main.png" alt="Logo Sambal Joelid" /></span><b>SAMBAL<br />JOELID</b>
         </button>
         <span className="customer-header-note">PEDESNYA KELEWATAN, BIKIN NAGIH!</span>
         <span className="customer-header-tag">LAYANAN PELANGGAN</span>
@@ -209,7 +209,7 @@ function Customer({ mode, setMode }) {
               <h1>{mode === 'order' ? 'Racik pesanan Anda.' : 'Kami siap mendengar.'}</h1>
               <p>{mode === 'order' ? 'Pilih menu dan cabang, lalu kami siapkan untuk Anda.' : 'Cerita Anda membantu kami memberikan pengalaman yang lebih baik.'}</p>
             </div>
-            <video src="/sambal_joelid_motion.mp4" autoPlay loop muted playsInline aria-label="Logo Sambal Joelid" />
+            <img src="/logo_main.png" alt="Logo Sambal Joelid" />
           </div>
           <div className="customer-form-card">
             {catalogError && <p className="error" role="alert">{catalogError} <button type="button" onClick={loadCatalog}>Coba lagi</button></p>}
@@ -1658,7 +1658,7 @@ function AdminSession({ token, onLogout }) {
       {/* Sidebar */}
       <aside className="admin-sidebar">
         <div className="admin-brand">
-          <video src="/sambal_joelid_motion.mp4" autoPlay loop muted playsInline aria-label="Logo Sambal Joelid" />
+          <img src="/logo_main.png" alt="Logo Sambal Joelid" />
           <div><b>Sambal Joelid</b><small>Pusat Operasional</small></div>
         </div>
         <nav>
@@ -2020,7 +2020,7 @@ function Admin() {
 
   return (
     <section className="login">
-      <video className="login-brand-art" src="/sambal_joelid_motion.mp4" autoPlay loop muted playsInline aria-label="Logo Sambal Joelid" />
+      <img className="login-brand-art" src="/logo_main.png" alt="Logo Sambal Joelid" />
       <p className="eyebrow">RUANG OPERASIONAL</p>
       <h2>Masuk sebagai Admin</h2>
       {error && <p className="error" role="alert">{error}</p>}
