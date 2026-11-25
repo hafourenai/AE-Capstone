@@ -6,7 +6,7 @@ import test from 'node:test';
 import { openDatabase } from '../src/database.js';
 import { OrderComplaintBridge } from '../src/services/orderComplaintBridge.js';
 import { MenuMatcher } from '../src/menuMatcher.js';
-import { TemplateStore } from '../src/templates.js';
+import { formatMenuList, TemplateStore } from '../src/templates.js';
 import { StateStore } from '../src/state.js';
 import { BotHandler } from '../src/bot.js';
 
@@ -194,6 +194,7 @@ test('bot: LLM OFFLINE langsung handoff tanpa mencoba memanggil LLM', async (t) 
 test('bot: dua kali tidak paham memicu handoff dan bot berhenti membalas', async (t) => {
   const llm = { extract: async () => ({ ok: false, reason: 'JSON_TIDAK_VALID', needsClarification: true }) };
   const { bot, state, conversationId } = setup(t, { llm });
+  state.save(conversationId, { ...state.get(conversationId), botState: 'PILIH_MENU' });
 
   const first = await bot.handle({ conversationId, phone: '628111', raw: 'qwerty' });
   assert.match(first.reply, /kurang paham/i);
@@ -316,4 +317,66 @@ test('bridge: validasi cabang tutup menghasilkan error BRANCH_CLOSED', (t) => {
     () => bridge.validateAndCalculateOrder('barat', [{ menuId: 'nasi-gudeg', quantity: 1 }]),
     /BRANCH_CLOSED/
   );
+});
+
+test('bot: sapaan misi min dijawab dengan menu utama dan informasi jam operasional', async (t) => {
+  const { bot, conversationId } = setup(t);
+  const result = await bot.handle({ conversationId, phone: '628111', raw: 'misi min' });
+
+  assert.equal(result.layer, 'rules');
+  assert.equal(result.intent, 'menu_utama');
+  assert.match(result.reply, /Sambal Joelid/);
+  assert.match(result.reply, /Jam Operasional:\s*Setiap hari 09\.00-21\.00/i);
+});
+
+test('bot: reset sesi setelah jeda >= 2 jam otomatis mengirim sapaan + jam buka apapun pesan pelanggannya', async (t) => {
+  const { bot, state, conversationId } = setup(t);
+
+  // Mulai order
+  const first = await bot.handle({ conversationId, phone: '628111', raw: 'gdg 2' });
+  assert.match(first.reply, /cabang mana/i);
+
+  // Kirim chat setelah jeda 2.5 jam (150 menit)
+  const previousLastMessageAt = new Date(Date.now() - 150 * 60_000).toISOString();
+  const resetResult = await bot.handle({
+    conversationId,
+    phone: '628111',
+    raw: 'ada promo apa kak',
+    previousLastMessageAt,
+  });
+
+  assert.equal(resetResult.layer, 'rules');
+  assert.equal(resetResult.intent, 'sapaan');
+  assert.match(resetResult.reply, /Jam Operasional:\s*Setiap hari 09\.00-21\.00/i);
+  assert.match(resetResult.reply, /Selamat datang di Sambal Joelid/i);
+  // Sesi telah direset
+  assert.equal(state.get(conversationId).botState, 'MENU_UTAMA');
+  assert.equal(state.get(conversationId).draft.items.length, 0);
+});
+
+test('templates: formatMenuList mengelompokkan menu berdasarkan kategori dengan emoji', () => {
+  const sampleMenus = [
+    { id: '1', name: 'Paket Ayam Geprek', category: 'Paket Ayam', price: 20000, active: 1, stock: 10 },
+    { id: '2', name: 'Paket Lele Goreng', category: 'Paket Seafood & Ikan', price: 18000, active: 1, stock: 10 },
+    { id: '3', name: 'Es Teh Manis', category: 'Minuman', price: 5000, active: 1, stock: 10 },
+  ];
+  const formatted = formatMenuList(sampleMenus);
+  assert.match(formatted, /\*🍗 PAKET AYAM\*/);
+  assert.match(formatted, /Paket Ayam Geprek — Rp20\.000/);
+  assert.match(formatted, /\*🐟 PAKET SEAFOOD & IKAN\*/);
+  assert.match(formatted, /Paket Lele Goreng — Rp18\.000/);
+  assert.match(formatted, /\*🥤 MINUMAN\*/);
+  assert.match(formatted, /Es Teh Manis — Rp5\.000/);
+});
+
+test('bot: opsi 1 - chat awal acak tanpa menu langsung dibalas sapaan + jam buka, tidak pernah bilang kurang paham', async (t) => {
+  const { bot, state, conversationId } = setup(t);
+
+  // Chat awal berupa kata acak, bukan sapaan standar, bukan menu
+  const result = await bot.handle({ conversationId, phone: '628111', raw: 'pagi kak min mau nanya dong ada orang kah' });
+  assert.match(result.reply, /Selamat datang di Sambal Joelid/i);
+  assert.match(result.reply, /Jam Operasional:\s*Setiap hari 09\.00-21\.00/i);
+  assert.doesNotMatch(result.reply, /kurang paham/i);
+  assert.equal(state.get(conversationId).botState, 'MENU_UTAMA');
+  assert.equal(state.get(conversationId).failCount, 0);
 });

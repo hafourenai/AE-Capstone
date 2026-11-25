@@ -772,52 +772,71 @@ function CatalogSettings({ token, onError }) {
                 </tr>
               </thead>
               <tbody>
-                {filteredMenus.map(menu => (
-                  <tr key={menu.id} className={menu.active ? '' : 'row-muted'}>
-                    <td>
-                      <div className="menu-title-cell">
-                        <b>{menu.name}</b>
-                        <span className="menu-id-tag">{menu.id}</span>
-                      </div>
-                      {menu.description && <p className="menu-desc-text">{menu.description}</p>}
-                      {menu.aliases?.length > 0 && (
-                        <div className="menu-aliases-list">
-                          <small>Alias: </small>
-                          {menu.aliases.map((a, i) => (
-                            <span key={i} className="alias-chip">{a}</span>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td><span className="category-badge">{menu.category || 'Lainnya'}</span></td>
-                    <td className="price-cell">{currency(menu.price)}</td>
-                    <td>
-                      <span className={`stock-badge ${menu.stock < 10 ? 'low' : ''}`}>
-                        {menu.stock}
-                      </span>
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className={`status-toggle ${menu.active ? 'active' : 'inactive'}`}
-                        onClick={() => toggleMenuActive(menu)}
-                        title="Klik untuk ubah status aktif/nonaktif"
-                      >
-                        {menu.active ? 'Aktif' : 'Nonaktif'}
-                      </button>
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <div className="row-actions">
-                        <button type="button" className="btn-icon" onClick={() => openEditMenu(menu)} title="Edit Menu">
-                          <Edit2 size={14} />
-                        </button>
-                        <button type="button" className="btn-icon danger" onClick={() => handleDeleteMenu(menu)} title="Hapus Permanen">
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {(() => {
+                  const grouped = {};
+                  filteredMenus.forEach(m => {
+                    const cat = m.category || 'Lainnya';
+                    if (!grouped[cat]) grouped[cat] = [];
+                    grouped[cat].push(m);
+                  });
+                  const rows = [];
+                  Object.entries(grouped).forEach(([cat, items]) => {
+                    rows.push(
+                      <tr key={`cat-${cat}`} className="category-group-row">
+                        <td colSpan="6">{cat} <span className="category-group-count">({items.length})</span></td>
+                      </tr>
+                    );
+                    items.forEach(menu => {
+                      rows.push(
+                        <tr key={menu.id} className={menu.active ? '' : 'row-muted'}>
+                          <td>
+                            <div className="menu-title-cell">
+                              <b>{menu.name}</b>
+                              <span className="menu-id-tag">{menu.id}</span>
+                            </div>
+                            {menu.description && <p className="menu-desc-text">{menu.description}</p>}
+                            {menu.aliases?.length > 0 && (
+                              <div className="menu-aliases-list">
+                                <small>Alias: </small>
+                                {menu.aliases.map((a, i) => (
+                                  <span key={i} className="alias-chip">{a}</span>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                          <td><span className="category-badge">{menu.category || 'Lainnya'}</span></td>
+                          <td className="price-cell">{currency(menu.price)}</td>
+                          <td>
+                            <span className={`stock-badge ${menu.stock < 10 ? 'low' : ''}`}>
+                              {menu.stock}
+                            </span>
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className={`status-toggle ${menu.active ? 'active' : 'inactive'}`}
+                              onClick={() => toggleMenuActive(menu)}
+                              title="Klik untuk ubah status aktif/nonaktif"
+                            >
+                              {menu.active ? 'Aktif' : 'Nonaktif'}
+                            </button>
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <div className="row-actions">
+                              <button type="button" className="btn-icon" onClick={() => openEditMenu(menu)} title="Edit Menu">
+                                <Edit2 size={14} />
+                              </button>
+                              <button type="button" className="btn-icon danger" onClick={() => handleDeleteMenu(menu)} title="Hapus Permanen">
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    });
+                  });
+                  return rows;
+                })()}
                 {!filteredMenus.length && (
                   <tr>
                     <td colSpan="6" className="table-empty">

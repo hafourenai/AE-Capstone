@@ -13,17 +13,57 @@ export function renderTemplate(content, vars = {}) {
   });
 }
 
+const CATEGORY_EMOJI = {
+  'Paket Ayam': '🍗',
+  'Paket Seafood & Ikan': '🐟',
+  'Paket Lainnya': '📦',
+  'Lauk Ayam (Satuan)': '🍗',
+  'Lauk Seafood & Ikan (Satuan)': '🐟',
+  'Lauk & Sayur Satuan': '🥬',
+  'Minuman': '🥤',
+  'Kemasan & Tambahan': '📋',
+  'Lainnya': '🍽️',
+};
+
+const CATEGORY_ORDER = [
+  'Paket Ayam', 'Paket Seafood & Ikan', 'Paket Lainnya',
+  'Lauk Ayam (Satuan)', 'Lauk Seafood & Ikan (Satuan)', 'Lauk & Sayur Satuan',
+  'Minuman', 'Kemasan & Tambahan', 'Lainnya',
+];
+
 export function formatMenuList(menus) {
   const available = (menus || []).filter((menu) => menu.active && (menu.stock === undefined || menu.stock > 0));
   if (!available.length) return '';
-  return available.map((menu) => `• ${menu.name} — ${formatRupiah(menu.price)}`).join('\n');
+
+  const groups = {};
+  available.forEach((menu) => {
+    const cat = menu.category || 'Lainnya';
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(menu);
+  });
+
+  const sections = [];
+  for (const cat of CATEGORY_ORDER) {
+    if (!groups[cat]) continue;
+    const emoji = CATEGORY_EMOJI[cat] || '🍽️';
+    const items = groups[cat].sort((a, b) => a.name.localeCompare(b.name));
+    sections.push(`*${emoji} ${cat.toUpperCase()}*\n${items.map((m) => `• ${m.name} — ${formatRupiah(m.price)}`).join('\n')}`);
+    delete groups[cat];
+  }
+  // Any remaining uncategorized
+  for (const [cat, items] of Object.entries(groups)) {
+    const emoji = CATEGORY_EMOJI[cat] || '🍽️';
+    sections.push(`*${emoji} ${cat.toUpperCase()}*\n${items.sort((a, b) => a.name.localeCompare(b.name)).map((m) => `• ${m.name} — ${formatRupiah(m.price)}`).join('\n')}`);
+  }
+
+  return sections.join('\n\n');
 }
 
 export const DEFAULT_TEMPLATES = {
-  menu_utama: 'Halo Kak! Selamat datang di Sambal Joelid 🌶️\n\nSilakan pilih layanan kami:\n*1* — Memesan Makanan 🍽️\n*2* — Mengajukan Keluhan / Kendala 📝\n*3* — Berbicara dengan Admin / Staf 👤\n\nBalas dengan angka *1*, *2*, atau *3* ya! 😊',
-  pilihan_tidak_valid: 'Mohon maaf Kak, pilihan belum sesuai. 🙏\n\nSilakan balas:\n*1* — Untuk memesan makanan\n*2* — Untuk mengajukan keluhan\n*3* — Untuk berbicara dengan admin\n\nAtau ketik *batal* untuk keluar.',
-  sapaan: 'Halo Kak! Selamat datang di Sambal Joelid 🌶️\n\nSilakan pilih layanan kami:\n*1* — Memesan Makanan 🍽️\n*2* — Mengajukan Keluhan / Kendala 📝\n*3* — Berbicara dengan Admin / Staf 👤\n\nBalas dengan angka *1*, *2*, atau *3* ya! 😊',
-  menu: '🌶️ Daftar menu Sambal Joelid:\n{daftar}\n\nSebutkan nama menu dan jumlahnya ya, Kak! 😊',
+  menu_utama: 'Halo Kak! Selamat datang di Sambal Joelid 🌶️\n🕒 Jam Operasional: {jam_buka}\n\nSilakan pilih layanan kami:\n*1* — Memesan Makanan 🍽️\n*2* — Mengajukan Keluhan / Kendala 📝\n*3* — Berbicara dengan Admin / Staf 👤\n\nBalas dengan angka *1*, *2*, atau *3*, atau langsung sebutkan pesanan Kakak ya! 😊',
+  pilihan_tidak_valid: 'Mohon maaf Kak, pilihan belum sesuai. 🙏\n\nSilakan balas:\n*1* — Untuk memesan makanan\n*2* — Untuk mengajukan keluhan\n*3* — Untuk berbicara dengan admin\n\nAtau langsung sebutkan menu yang ingin dipesan ya!',
+  sapaan: 'Halo Kak! Selamat datang di Sambal Joelid 🌶️\n🕒 Jam Operasional: {jam_buka}\n\nSilakan pilih layanan kami:\n*1* — Memesan Makanan 🍽️\n*2* — Mengajukan Keluhan / Kendala 📝\n*3* — Berbicara dengan Admin / Staf 👤\n\nBalas dengan angka *1*, *2*, atau *3*, atau langsung sebutkan pesanan Kakak ya! 😊',
+  menu: '🌶️ Daftar menu Sambal Joelid:\n\n{daftar}\n\nSebutkan nama menu dan jumlahnya ya, Kak! 😊',
   menu_kosong: 'Mohon maaf Kak, belum ada menu yang tersedia saat ini. Saya sambungkan ke staf kami ya.',
   tanya_jam: 'Kami buka {jam_buka}.',
   jam_belum_diatur: 'Mohon maaf Kak, jam buka belum tersedia. Saya sambungkan ke staf kami ya.',
@@ -52,6 +92,18 @@ export const DEFAULT_TEMPLATES = {
 
 // Perbarui hanya template bawaan versi sebelumnya; template yang diedit admin tetap dipertahankan.
 const PREVIOUS_TEMPLATES = {
+  menu_utama: [
+    'Halo Kak! Selamat datang di Sambal Joelid 🌶️\n\nSilakan pilih layanan kami:\n*1* — Memesan Makanan 🍽️\n*2* — Mengajukan Keluhan / Kendala 📝\n*3* — Berbicara dengan Admin / Staf 👤\n\nBalas dengan angka *1*, *2*, atau *3* ya! 😊',
+  ],
+  sapaan: [
+    'Halo Kak! Selamat datang di Sambal Joelid 🌶️\n\nSilakan pilih layanan kami:\n*1* — Memesan Makanan 🍽️\n*2* — Mengajukan Keluhan / Kendala 📝\n*3* — Berbicara dengan Admin / Staf 👤\n\nBalas dengan angka *1*, *2*, atau *3* ya! 😊',
+  ],
+  pilihan_tidak_valid: [
+    'Mohon maaf Kak, pilihan belum sesuai. 🙏\n\nSilakan balas:\n*1* — Untuk memesan makanan\n*2* — Untuk mengajukan keluhan\n*3* — Untuk berbicara dengan admin\n\nAtau ketik *batal* untuk keluar.',
+  ],
+  menu: [
+    '🌶️ Daftar menu Sambal Joelid:\n{daftar}\n\nSebutkan nama menu dan jumlahnya ya, Kak! 😊',
+  ],
   konfirmasi: [
     '📋 Ringkasan pesanan untuk *{nama}:*\n\n{ringkasan}\n\n*Total: {total}*\n\nSudah sesuai? Balas *YA* untuk konfirmasi atau *BATAL* untuk membatalkan.',
     'Pesanan {nama}: {ringkasan}. Total {total}. Sudah benar? Balas YA, atau BATAL jika ingin mengubah.',

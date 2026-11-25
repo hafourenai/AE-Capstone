@@ -188,7 +188,8 @@ export function openDatabase(filename) {
   }
 
   const seedSetting = db.prepare('INSERT OR IGNORE INTO business_settings(key, value) VALUES (?, ?)');
-  [['opening_hours', ''], ['address', ''], ['phone', ''], ['business_name', 'Sambal Joelid']].forEach(([key, value]) => seedSetting.run(key, value));
+  [['opening_hours', 'Setiap hari 09.00 - 21.00 WIB'], ['address', ''], ['phone', ''], ['business_name', 'Sambal Joelid']].forEach(([key, value]) => seedSetting.run(key, value));
+  db.prepare("UPDATE business_settings SET value = 'Setiap hari 09.00 - 21.00 WIB' WHERE key = 'opening_hours' AND (value IS NULL OR value = '')").run();
 
   // ── State bot dipisah dari kolom `state` lama (lihat DECISIONS.md D3) ──
   const conversationColumnsAfter = db.prepare('PRAGMA table_info(whatsapp_conversations)').all();
@@ -235,6 +236,29 @@ export function openDatabase(filename) {
      ['lele-goreng','Lele Goreng','Lauk Satuan',16000,999,1,'Lele goreng gurih'],
      ['es-teh','Es Teh Manis','Minuman',5000,999,1,'Es teh manis segar']].forEach((x) => add.run(...x));
   }
+
+  // ── Migrasi: re-kategorisasi menu 'Lainnya' ke kategori yang lebih spesifik ──
+  const migrated = db.prepare("SELECT value FROM business_settings WHERE key = 'menu_categories_migrated_v1'").get();
+  if (!migrated) {
+    db.transaction(() => {
+      db.exec(`
+        UPDATE menus SET category = CASE
+          WHEN name LIKE '%Paket%' AND name LIKE '%Ayam%' THEN 'Paket Ayam'
+          WHEN name LIKE '%Paket%' AND (name LIKE '%Lele%' OR name LIKE '%Nila%' OR name LIKE '%Bandeng%') THEN 'Paket Seafood & Ikan'
+          WHEN name LIKE '%Paket%' THEN 'Paket Lainnya'
+          WHEN name NOT LIKE '%Paket%' AND (name LIKE 'Ayam%' OR name IN ('Ati','Ceker','Kulit','Usus')) THEN 'Lauk Ayam (Satuan)'
+          WHEN name NOT LIKE '%Paket%' AND (name LIKE 'Lele%' OR name LIKE 'Nila%' OR name LIKE 'Bandeng%' OR name IN ('Cumi','Jambal','Peda','Sepat','Jukut')) THEN 'Lauk Seafood & Ikan (Satuan)'
+          WHEN name NOT LIKE '%Paket%' AND (name IN ('Nasi','Tahu','Tempe','Telor','Terong','Jengkol','Pete','Kangkung','Kol','Toge','Lalapan','Sambel','Belah') OR name LIKE 'Nasi %' OR name = 'Mie Goreng') THEN 'Lauk & Sayur Satuan'
+          WHEN name NOT LIKE '%Paket%' AND name NOT LIKE 'Nasi%' AND (name LIKE 'Aqua%' OR name LIKE 'Es %' OR name LIKE 'Teh %' OR name = 'Teh Manis' OR name = 'Teh Tawar') THEN 'Minuman'
+          WHEN name LIKE '%Packing%' OR name LIKE '%Thinwall%' OR name LIKE '%Injection%' THEN 'Kemasan & Tambahan'
+          ELSE category
+        END
+        WHERE category = 'Lainnya';
+      `);
+      db.prepare("INSERT OR REPLACE INTO business_settings(key, value, updated_at) VALUES ('menu_categories_migrated_v1', '1', CURRENT_TIMESTAMP)").run();
+    })();
+  }
+
   return db;
 }
 

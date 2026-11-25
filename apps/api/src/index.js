@@ -156,19 +156,19 @@ function resumeExpiredConversations() {
 setInterval(resumeExpiredConversations, 15_000).unref();
 
 function upsertConversation(phone, chatId) {
-  const conv = db.prepare('SELECT id FROM whatsapp_conversations WHERE chat_id = ? OR phone = ?').get(chatId, phone);
+  const conv = db.prepare('SELECT id, last_message_at FROM whatsapp_conversations WHERE chat_id = ? OR phone = ?').get(chatId, phone);
   if (!conv) {
     const result = db.prepare('INSERT INTO whatsapp_conversations(phone, chat_id, state, created_at, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)').run(phone, chatId, 'AI_ACTIVE');
-    return Number(result.lastInsertRowid);
+    return { id: Number(result.lastInsertRowid), previousLastMessageAt: null };
   }
-  db.prepare('UPDATE whatsapp_conversations SET chat_id = ?, phone = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(chatId, phone, conv.id);
-  return conv.id;
+  db.prepare('UPDATE whatsapp_conversations SET chat_id = ?, phone = ? WHERE id = ?').run(chatId, phone, conv.id);
+  return { id: conv.id, previousLastMessageAt: conv.last_message_at };
 }
 
 function saveInbound(conversationId, messageId, content) {
   db.prepare('INSERT INTO whatsapp_messages(conversation_id, waha_message_id, direction, sender_type, content, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)')
     .run(conversationId, messageId, 'INBOUND', 'CUSTOMER', content);
-  db.prepare('UPDATE whatsapp_conversations SET last_message_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(conversationId);
+  db.prepare('UPDATE whatsapp_conversations SET last_message_at = CURRENT_TIMESTAMP WHERE id = ?').run(conversationId);
 }
 
 async function markHandoff(conversationId, chatId, text) {
@@ -491,7 +491,7 @@ const messagePipeline = new IncomingPipeline({
   db,
   delayMs: env.whatsappDebounceMs,
   processBatch: async ({ phone, chatId, raw, messageIds }) => {
-    const conversationId = upsertConversation(phone, chatId);
+    const { id: conversationId, previousLastMessageAt } = upsertConversation(phone, chatId);
     saveInbound(conversationId, messageIds[0], raw);
     const startedAt = Date.now();
     const norm = normalize(raw);
@@ -504,7 +504,7 @@ const messagePipeline = new IncomingPipeline({
 
     let result = null;
     try {
-      result = await bot.handle({ conversationId, phone, raw, norm });
+      result = await bot.handle({ conversationId, phone, raw, norm, previousLastMessageAt });
     } catch (error) {
       console.error('[Bot] Kesalahan tak terduga:', error.message);
       stateStore.setHandoff(conversationId);

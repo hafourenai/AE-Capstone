@@ -491,7 +491,7 @@ main:has(.customer-page) { max-width: none; padding: 0; }
 }
 
 /* Admin: katalog & pengaturan bot */
-.settings-stack { display: grid; gap: 18px; }
+.settings-stack { display: grid; gap: 18px; margin-top: 24px; }
 .settings-panel { overflow: visible; }
 .settings-rows { display: grid; }
 .settings-row { display: grid; gap: 10px; padding: 16px 24px; border-bottom: 1px solid #eeebe9; }
@@ -540,7 +540,10 @@ main:has(.customer-page) { max-width: none; padding: 0; }
 .admin-table tr.row-muted { opacity: .6; background: #fafafa; }
 .menu-title-cell { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .menu-title-cell b { font-size: .8rem; color: #17301f; }
-.menu-id-tag { font-family: monospace; font-size: .62rem; color: #8b8480; background: #f3f0ee; padding: 2px 6px; border-radius: 4px; }
+.menu-id-tag { font-family: monospace; font-size: .62rem; color: #8b8480; background: #f3f0ee; padding: 2px 6px; border-radius: 4px; opacity: 0; transition: opacity .15s; }
+tr:hover .menu-id-tag { opacity: 1; }
+.category-group-row td { padding: 10px 24px; background: #f4ecdc; color: #8e1b1b; font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; border-bottom: 2px solid #ebd9a8; }
+.category-group-count { font-weight: 400; color: #746e6a; margin-left: 4px; }
 .menu-desc-text { margin: 4px 0 0; font-size: .68rem; color: #746e6a; line-height: 1.4; max-width: 380px; }
 .menu-aliases-list { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 6px; font-size: .63rem; color: #8b8480; }
 .alias-chip { padding: 2px 6px; border-radius: 4px; background: #f0ece9; color: #555; font-size: .62rem; }

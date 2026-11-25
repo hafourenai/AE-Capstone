@@ -12,6 +12,7 @@ export const BOT_STATES = [
   'HANDOFF',
 ];
 export const STALE_MINUTES = 30;
+export const SESSION_RESET_MINUTES = 120;
 
 export function emptyDraft() {
   return {

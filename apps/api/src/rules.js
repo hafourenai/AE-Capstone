@@ -4,10 +4,15 @@ import { isBareNumber } from './normalize.js';
 // Semua nilai sudah dalam bentuk `norm` (lihat normalize.js).
 
 export const SAPAAN = new Set([
-  'halo', 'hai', 'hi', 'hei', 'woi', 'p', 'tes', 'test',
+  'halo', 'hai', 'hi', 'hei', 'woi', 'p', 'tes', 'test', 'hallo', 'hello', 'helo',
   'pagi', 'selamat pagi', 'siang', 'selamat siang', 'sore', 'selamat sore', 'malam', 'selamat malam',
   'assalamualaikum', 'assalamu alaikum', 'ass', 'asslm', 'halo kak', 'hai kak', 'halo min', 'hai min',
-  'permisi', 'mau tanya',
+  'permisi', 'mau tanya', 'mau nanya', 'permisi mau tanya', 'misi mau tanya', 'permisi mau nanya', 'misi mau nanya',
+  'misi', 'misi min', 'misi kak', 'misi min kak', 'permisi min', 'permisi kak', 'permisi kak min',
+  'punten', 'punten min', 'punten kak',
+  'min', 'kak', 'kak min', 'min kak',
+  'halo admin', 'hai admin', 'hi admin',
+  'selamat', 'sugeng', 'met pagi', 'met siang', 'met sore', 'met malam',
 ]);
 
 export const MAU_PESAN = new Set([

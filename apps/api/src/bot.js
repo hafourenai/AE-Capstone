@@ -1,8 +1,8 @@
-import { normalize } from './normalize.js';
+import { isBareNumber, normalize } from './normalize.js';
 import { matchRule, matchStateRule } from './rules.js';
 import { extractQuantity } from './menuMatcher.js';
 import { resolveBranch } from './services/cartManager.js';
-import { addDraftItem, clearDraft, removeDraftItem } from './state.js';
+import { addDraftItem, clearDraft, emptyDraft, removeDraftItem, SESSION_RESET_MINUTES } from './state.js';
 import { formatMenuList, formatRupiah } from './templates.js';
 
 const NAME_BLOCKLIST = new Set([
@@ -27,7 +27,7 @@ export class BotHandler {
     this.logger = logger;
   }
 
-  async handle({ conversationId, phone, raw, norm: providedNorm }) {
+  async handle({ conversationId, phone, raw, norm: providedNorm, previousLastMessageAt }) {
     const session = this.state.get(conversationId);
     if (!session) return null;
     if (session.handoff || session.botState === 'HANDOFF') return null;
@@ -38,6 +38,28 @@ export class BotHandler {
     const menus = await this.catalog.getMenus();
     const branches = this.db.prepare('SELECT id, name, is_open FROM branches WHERE active = 1').all();
     const settings = this.settings();
+
+    // ── Deteksi jeda sesi (>= SESSION_RESET_MINUTES sejak pesan terakhir) ──
+    // Jika pelanggan chat kembali setelah lama tidak aktif, sambut ulang dengan
+    // sapaan + jam operasional, apapun isi pesannya, dan reset state sesi.
+    if (previousLastMessageAt) {
+      const prevDate = new Date(
+        String(previousLastMessageAt).includes('T')
+          ? previousLastMessageAt
+          : `${String(previousLastMessageAt).replace(' ', 'T')}Z`
+      );
+      const gapMs = Date.now() - prevDate.getTime();
+      if (!Number.isNaN(prevDate.getTime()) && gapMs >= SESSION_RESET_MINUTES * 60_000) {
+        // Reset sesi, sambut ulang
+        session.botState = 'MENU_UTAMA';
+        session.draft = emptyDraft();
+        session.failCount = 0;
+        session.handoff = false;
+        this.state.save(conversationId, session);
+        const jamBuka = settings.opening_hours || 'Setiap hari 09.00 - 21.00 WIB';
+        return this.out(this.templates.render('menu_utama', { jam_buka: jamBuka }), 'rules', 'sapaan');
+      }
+    }
 
     const rule = matchRule(norm);
 
@@ -77,7 +99,8 @@ export class BotHandler {
         session.botState = 'MENU_UTAMA';
         session.failCount = 0;
         this.save(session);
-        return this.out(this.templates.render('menu_utama'), 'rules', 'menu_utama');
+        const jamBuka = settings.opening_hours || 'Setiap hari 09.00 - 21.00 WIB';
+        return this.out(this.templates.render('menu_utama', { jam_buka: jamBuka }), 'rules', 'menu_utama');
       }
     }
 
@@ -100,9 +123,15 @@ export class BotHandler {
       }
       if (rule?.type === 'menu') return this.menu(session, menus);
       if (rule?.type === 'mau_pesan') return this.tanyaMenu(session);
+      if (rule?.type === 'sapaan') return this.sapaan(session, settings);
 
-      // Pilihan angka lain atau input di MENU_UTAMA
-      return this.out(this.templates.render('pilihan_tidak_valid'), 'rules', 'menu_utama');
+      // Jika mengirim angka selain 1, 2, 3 di MENU_UTAMA
+      if (isBareNumber(norm)) {
+        return this.out(this.templates.render('pilihan_tidak_valid'), 'rules', 'menu_utama');
+      }
+
+      // Jika bukan angka (misal langsung menyebut nama menu atau pesan), pindah ke PILIH_MENU dan lanjutkan
+      session.botState = 'PILIH_MENU';
     }
 
     // State keluhan langkah 1: menerima deskripsi keluhan
@@ -128,7 +157,7 @@ export class BotHandler {
     }
 
     if (rule?.type === 'menu') return this.menu(session, menus);
-    if (rule?.type === 'sapaan') return this.sapaan(session);
+    if (rule?.type === 'sapaan') return this.sapaan(session, settings);
     if (rule?.type === 'mau_pesan') return this.tanyaMenu(session);
 
     if (session.botState === 'KONFIRMASI' && rule?.type === 'setuju') {
@@ -295,10 +324,11 @@ export class BotHandler {
     return this.out(this.templates.render('menu', { daftar }), 'rules', 'tanya_menu');
   }
 
-  sapaan(session) {
+  sapaan(session, settings = this.settings()) {
     session.failCount = 0;
     this.save(session);
-    return this.out(this.templates.render('sapaan'), 'rules', 'sapaan');
+    const jamBuka = settings?.opening_hours || 'Setiap hari 09.00 - 21.00 WIB';
+    return this.out(this.templates.render('sapaan', { jam_buka: jamBuka }), 'rules', 'sapaan');
   }
 
   tanyaMenu(session) {
@@ -663,10 +693,20 @@ export class BotHandler {
   }
 
   fail(session) {
+    // Jika pelanggan masih di state IDLE (belum ada transaksi / belum memilih layanan),
+    // jangan pernah kirim pesan "kurang paham". Sambut mereka dengan sapaan + jam buka + menu utama!
+    if (session.botState === 'IDLE') {
+      session.botState = 'MENU_UTAMA';
+      session.failCount = 0;
+      this.save(session);
+      const settings = this.settings();
+      const jamBuka = settings.opening_hours || 'Setiap hari 09.00 - 21.00 WIB';
+      return this.out(this.templates.render('menu_utama', { jam_buka: jamBuka }), 'rules', 'sapaan');
+    }
+
     const failCount = this.state.incrementFail(session.conversationId, session);
     session.failCount = failCount;
     if (failCount >= 2) return this.handoff(session);
-    if (session.botState === 'IDLE') session.botState = 'PILIH_MENU';
     this.save(session);
     return this.out(this.templates.render('tidak_paham'), 'fallback', null);
   }
