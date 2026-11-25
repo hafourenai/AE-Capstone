@@ -35,12 +35,17 @@ export class OrderComplaintBridge {
    */
   validateAndCalculateOrder(branchId, items) {
     // Validasi branch: cari by ID atau fallback nama/case-insensitive
-    let branch = branchId ? this.db.prepare('SELECT id, name FROM branches WHERE id = ? AND active = 1').get(branchId) : null;
+    let branch = branchId ? this.db.prepare('SELECT id, name, is_open FROM branches WHERE id = ? AND active = 1').get(branchId) : null;
     if (!branch && branchId) {
-      branch = this.db.prepare('SELECT id, name FROM branches WHERE (LOWER(id) = LOWER(?) OR LOWER(name) LIKE LOWER(?)) AND active = 1').get(branchId, `%${branchId}%`);
+      branch = this.db.prepare('SELECT id, name, is_open FROM branches WHERE (LOWER(id) = LOWER(?) OR LOWER(name) LIKE LOWER(?)) AND active = 1').get(branchId, `%${branchId}%`);
     }
     if (!branch) {
       throw new Error('BRANCH_NOT_FOUND');
+    }
+    if (branch.is_open === 0) {
+      const err = new Error('BRANCH_CLOSED');
+      err.branchName = branch.name;
+      throw err;
     }
 
     // Deduplikasi items by menuId

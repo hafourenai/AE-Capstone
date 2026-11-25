@@ -52,7 +52,7 @@ function setup(t, { menus = MENUS, llm } = {}) {
   const fakeLLM = llm || { extract: async () => { throw Object.assign(new Error('LLM tidak boleh dipanggil'), { code: 'TEST' }); } };
 
   const bot = new BotHandler({ db, catalog, matcher, llm: fakeLLM, bridge, templates, state, logger: { error: () => {}, warn: () => {} } });
-  return { db, bot, state, templates, conversationId };
+  return { db, bot, state, templates, conversationId, bridge };
 }
 
 test('bot: perintah menu dijawab tanpa LLM', async (t) => {
@@ -290,4 +290,30 @@ test('bot: keluhan dikonfirmasi lalu disimpan sebagai complaint', async (t) => {
   const second = await bot.handle({ conversationId, phone: '628111', raw: 'ya' });
   assert.match(second.reply, /Keluhan Bapak\/Ibu sudah kami terima/);
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM customer_complaints').get().count, 1);
+});
+
+test('bot: cabang tutup menginformasikan tutup dan menawarkan cabang yang buka', async (t) => {
+  const { db, bot, conversationId } = setup(t);
+  // Tutup cabang barat
+  db.prepare("UPDATE branches SET is_open = 0 WHERE id = 'barat'").run();
+
+  await bot.handle({ conversationId, phone: '628111', raw: 'mau pesan nasi gudeg 1' });
+  const reply = await bot.handle({ conversationId, phone: '628111', raw: 'barat' });
+
+  assert.match(reply.reply, /Cabang Barat saat ini sedang tutup/);
+  assert.match(reply.reply, /Cabang Pusat/);
+
+  // Jika pilih cabang pusat yang buka, lanjut ke nama
+  const next = await bot.handle({ conversationId, phone: '628111', raw: 'pusat' });
+  assert.match(next.reply, /nama/i);
+});
+
+test('bridge: validasi cabang tutup menghasilkan error BRANCH_CLOSED', (t) => {
+  const { db, bridge } = setup(t);
+  db.prepare("UPDATE branches SET is_open = 0 WHERE id = 'barat'").run();
+
+  assert.throws(
+    () => bridge.validateAndCalculateOrder('barat', [{ menuId: 'nasi-gudeg', quantity: 1 }]),
+    /BRANCH_CLOSED/
+  );
 });

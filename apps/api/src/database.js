@@ -9,8 +9,8 @@ export function openDatabase(filename) {
   db.pragma('foreign_keys = ON');
   db.pragma('journal_mode = WAL');
   db.exec(`
-    CREATE TABLE IF NOT EXISTS branches (id TEXT PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1);
-    CREATE TABLE IF NOT EXISTS menus (id TEXT PRIMARY KEY, name TEXT NOT NULL, price INTEGER NOT NULL CHECK(price >= 0), active INTEGER NOT NULL DEFAULT 1);
+    CREATE TABLE IF NOT EXISTS branches (id TEXT PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, is_open INTEGER NOT NULL DEFAULT 1);
+    CREATE TABLE IF NOT EXISTS menus (id TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'Lainnya', price INTEGER NOT NULL CHECK(price >= 0), active INTEGER NOT NULL DEFAULT 1);
     CREATE TABLE IF NOT EXISTS customer_orders (
       id INTEGER PRIMARY KEY, reference_number TEXT NOT NULL UNIQUE, customer_name TEXT NOT NULL, customer_phone TEXT NOT NULL,
       branch_id TEXT NOT NULL REFERENCES branches(id), notes TEXT, total_amount INTEGER NOT NULL CHECK(total_amount >= 0),
@@ -130,7 +130,13 @@ export function openDatabase(filename) {
   if (!conversationColumns.some(col => col.name === 'paused_until')) {
     db.exec('ALTER TABLE whatsapp_conversations ADD COLUMN paused_until TEXT');
   }
+  const branchColumns = db.prepare("PRAGMA table_info(branches)").all();
+  if (!branchColumns.some(col => col.name === 'is_open')) {
+    db.exec('ALTER TABLE branches ADD COLUMN is_open INTEGER NOT NULL DEFAULT 1');
+  }
+
   const menuColumns = db.prepare("PRAGMA table_info(menus)").all();
+  if (!menuColumns.some(col => col.name === 'category')) db.exec("ALTER TABLE menus ADD COLUMN category TEXT NOT NULL DEFAULT 'Lainnya'");
   if (!menuColumns.some(col => col.name === 'stock')) db.exec('ALTER TABLE menus ADD COLUMN stock INTEGER NOT NULL DEFAULT 999');
   if (!menuColumns.some(col => col.name === 'description')) db.exec("ALTER TABLE menus ADD COLUMN description TEXT NOT NULL DEFAULT ''");
   if (!menuColumns.some(col => col.name === 'aliases')) db.exec("ALTER TABLE menus ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'");
@@ -217,12 +223,17 @@ export function openDatabase(filename) {
     CREATE INDEX IF NOT EXISTS idx_wa_cart_conv ON whatsapp_cart(conversation_id);
   `);
 
+  const branchCount = db.prepare('SELECT COUNT(*) AS count FROM branches').get().count;
+  if (!branchCount) {
+    db.prepare('INSERT INTO branches (id,name,is_open) VALUES (?,?,?)').run('pusat', 'Cabang Pusat', 1);
+    db.prepare('INSERT INTO branches (id,name,is_open) VALUES (?,?,?)').run('barat', 'Cabang Barat', 1);
+  }
   const count = db.prepare('SELECT COUNT(*) AS count FROM menus').get().count;
   if (!count) {
-    db.prepare('INSERT INTO branches (id,name) VALUES (?,?)').run('pusat', 'Cabang Pusat');
-    db.prepare('INSERT INTO branches (id,name) VALUES (?,?)').run('barat', 'Cabang Barat');
-    const add = db.prepare('INSERT INTO menus (id,name,price) VALUES (?,?,?)');
-    [['ayam-geprek','Ayam Geprek',18000],['lele-goreng','Lele Goreng',16000],['es-teh','Es Teh Manis',5000]].forEach((x) => add.run(...x));
+    const add = db.prepare('INSERT INTO menus (id,name,category,price,stock,active,description) VALUES (?,?,?,?,?,?,?)');
+    [['ayam-geprek','Ayam Geprek','Paket',18000,999,1,'Ayam geprek krispi dengan sambal khas'],
+     ['lele-goreng','Lele Goreng','Lauk Satuan',16000,999,1,'Lele goreng gurih'],
+     ['es-teh','Es Teh Manis','Minuman',5000,999,1,'Es teh manis segar']].forEach((x) => add.run(...x));
   }
   return db;
 }

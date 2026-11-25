@@ -89,13 +89,14 @@ export class CatalogService {
 
   getStatus() {
     return {
-      source: this.url ? 'Google Sheets CSV' : 'Belum dikonfigurasi',
+      source: 'Database SQLite',
       itemCount: this.db.prepare('SELECT COUNT(*) AS count FROM menus WHERE active = 1').get().count,
+      totalCount: this.db.prepare('SELECT COUNT(*) AS count FROM menus').get().count,
       lastAttemptAt: this.lastAttemptAt,
       lastSuccessAt: this.lastImportAt,
       lastError: this.lastError,
       errors: this.errors,
-      stale: !this.lastImportAt || Date.now() - Date.parse(this.lastImportAt) > 30 * 60_000,
+      stale: false,
     };
   }
 
@@ -124,9 +125,10 @@ export class CatalogService {
 
   localMenus() {
     const aliases = (menuId) => this.db.prepare('SELECT alias_raw FROM menu_aliases WHERE menu_id = ? ORDER BY alias_raw').all(menuId);
-    return this.db.prepare('SELECT id, name, price, stock, active, description FROM menus ORDER BY name').all()
+    return this.db.prepare('SELECT id, name, category, price, stock, active, description FROM menus ORDER BY category, name').all()
       .map(item => ({
         ...item,
+        category: item.category || 'Lainnya',
         active: Boolean(item.active),
         aliases: aliases(item.id).map(row => row.alias_raw),
       }));
@@ -172,10 +174,22 @@ export class CatalogService {
     })(menus);
   }
 
-  createMenu({ id, name, price, stock = 999, active = true, description = '' }) {
-    this.db.prepare('INSERT INTO menus(id,name,price,active,stock,description,aliases) VALUES (?,?,?,?,?,?,?)')
-      .run(id, name, price, active ? 1 : 0, stock, description, '[]');
-    return this.getMenu(id);
+  createMenu({ id, name, category = 'Lainnya', price, stock = 999, active = true, description = '', aliases = [] }) {
+    let finalId = id;
+    if (!finalId) {
+      const base = normalize(name).replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || 'menu';
+      finalId = base;
+      let counter = 1;
+      while (this.db.prepare('SELECT 1 FROM menus WHERE id = ?').get(finalId)) {
+        finalId = `${base}-${counter++}`;
+      }
+    }
+    this.db.prepare('INSERT INTO menus(id,name,category,price,active,stock,description,aliases) VALUES (?,?,?,?,?,?,?,?)')
+      .run(finalId, name, category || 'Lainnya', price, active ? 1 : 0, stock, description, '[]');
+    if (Array.isArray(aliases) && aliases.length > 0) {
+      this.replaceAliases(finalId, aliases);
+    }
+    return this.getMenu(finalId);
   }
 
   updateMenu(id, patch) {
@@ -183,13 +197,17 @@ export class CatalogService {
     if (!current) return null;
     const next = {
       name: patch.name ?? current.name,
+      category: patch.category ?? current.category ?? 'Lainnya',
       price: patch.price ?? current.price,
       stock: patch.stock ?? current.stock,
       active: patch.active === undefined ? current.active : (patch.active ? 1 : 0),
       description: patch.description ?? current.description,
     };
-    this.db.prepare('UPDATE menus SET name=?, price=?, stock=?, active=?, description=? WHERE id=?')
-      .run(next.name, next.price, next.stock, next.active, next.description, id);
+    this.db.prepare('UPDATE menus SET name=?, category=?, price=?, stock=?, active=?, description=? WHERE id=?')
+      .run(next.name, next.category, next.price, next.stock, next.active, next.description, id);
+    if (Array.isArray(patch.aliases)) {
+      this.replaceAliases(id, patch.aliases);
+    }
     return this.getMenu(id);
   }
 
@@ -201,13 +219,18 @@ export class CatalogService {
   }
 
   getMenu(id) {
-    const menu = this.db.prepare('SELECT id, name, price, stock, active, description FROM menus WHERE id = ?').get(id);
+    const menu = this.db.prepare('SELECT id, name, category, price, stock, active, description FROM menus WHERE id = ?').get(id);
     if (!menu) return null;
     return {
       ...menu,
+      category: menu.category || 'Lainnya',
       active: Boolean(menu.active),
       aliases: this.db.prepare('SELECT alias_raw FROM menu_aliases WHERE menu_id = ? ORDER BY alias_raw').all(id).map(row => row.alias_raw),
     };
+  }
+
+  getCategories() {
+    return this.db.prepare("SELECT DISTINCT category FROM menus WHERE category IS NOT NULL AND category != '' ORDER BY category").all().map(r => r.category);
   }
 
   /** Ganti seluruh alias sebuah menu. Alias dinormalisasi di server, bukan di browser. */

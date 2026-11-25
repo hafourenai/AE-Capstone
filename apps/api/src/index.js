@@ -105,8 +105,7 @@ const bot = new BotHandler({
   state: stateStore,
   logger: console,
 });
-catalog.init().then(result => { if (result?.changed) menuMatcher.invalidate(); });
-setInterval(async () => { const result = await catalog.sync(); if (result.changed) menuMatcher.invalidate(); }, env.catalogTtlMs).unref();
+catalog.init().catch(err => console.error('[CATALOG] init error:', err.message));
 const messageRateBuckets = new Map();
 let lastWebhookAt = null;
 
@@ -219,13 +218,13 @@ api.get('/public/menu', async (_, res) => {
   const menus = await catalog.getMenus();
   res.json(menus.filter(menu => menu.active && menu.stock > 0).sort((a, b) => a.name.localeCompare(b.name)));
 });
-api.get('/public/branches', (_, res) => res.json(rows('SELECT id,name FROM branches WHERE active=1 ORDER BY name')));
+api.get('/public/branches', (_, res) => res.json(rows('SELECT id,name,is_open FROM branches WHERE active=1 ORDER BY name')));
 api.get('/public/info', (_, res) => {
   const settings = Object.fromEntries(rows('SELECT key, value FROM business_settings').map(row => [row.key, row.value]));
   res.json(settings);
 });
 
-// ── Admin: menu, alias, jam/lokasi, template ─────────────────────────────────
+// ── Admin: menu, cabang, alias, jam/lokasi, template ─────────────────────────
 const settingsInput = z.object({
   opening_hours: z.string().trim().max(300).optional(),
   address: z.string().trim().max(500).optional(),
@@ -233,12 +232,132 @@ const settingsInput = z.object({
   business_name: z.string().trim().max(120).optional(),
 });
 
+const menuCreateInput = z.object({
+  id: z.string().trim().max(50).optional(),
+  name: z.string().trim().min(2).max(100),
+  category: z.string().trim().min(1).max(50).optional().default('Lainnya'),
+  price: z.number().int().min(0),
+  stock: z.number().int().min(0).optional().default(999),
+  active: z.boolean().optional().default(true),
+  description: z.string().trim().max(500).optional().default(''),
+  aliases: z.array(z.string().trim()).optional().default([]),
+});
+
+const menuUpdateInput = z.object({
+  name: z.string().trim().min(2).max(100).optional(),
+  category: z.string().trim().min(1).max(50).optional(),
+  price: z.number().int().min(0).optional(),
+  stock: z.number().int().min(0).optional(),
+  active: z.boolean().optional(),
+  description: z.string().trim().max(500).optional(),
+  aliases: z.array(z.string().trim()).optional(),
+});
+
 api.get('/admin/menus', auth, async (_, res) => res.json(await catalog.getMenus()));
+api.get('/admin/menu-categories', auth, (_, res) => res.json(catalog.getCategories()));
+
+api.post('/admin/menus', auth, validate(menuCreateInput), (req, res) => {
+  try {
+    const menu = catalog.createMenu(req.body);
+    menuMatcher.invalidate();
+    res.status(201).json(menu);
+  } catch (error) {
+    res.status(400).json({ error: 'CREATE_MENU_FAILED', message: error.message });
+  }
+});
+
+api.put('/admin/menus/:id', auth, validate(menuUpdateInput), (req, res) => {
+  try {
+    const updated = catalog.updateMenu(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ error: 'MENU_NOT_FOUND', message: 'Menu tidak ditemukan' });
+    menuMatcher.invalidate();
+    res.json(updated);
+  } catch (error) {
+    res.status(400).json({ error: 'UPDATE_MENU_FAILED', message: error.message });
+  }
+});
+
+api.delete('/admin/menus/:id', auth, (req, res) => {
+  try {
+    const success = catalog.deleteMenu(req.params.id);
+    if (!success) return res.status(404).json({ error: 'MENU_NOT_FOUND', message: 'Menu tidak ditemukan' });
+    menuMatcher.invalidate();
+    res.json({ ok: true, deleted: true });
+  } catch (error) {
+    res.status(400).json({ error: 'DELETE_MENU_FAILED', message: error.message });
+  }
+});
+
 api.get('/admin/menu-sync-status', auth, (_, res) => res.json(catalog.getStatus()));
 api.post('/admin/menu-sync', auth, async (_, res) => {
-  const result = await catalog.sync();
-  if (result.changed) menuMatcher.invalidate();
-  res.json({ ...result, status: catalog.getStatus() });
+  res.json({ changed: false, status: catalog.getStatus(), message: 'Katalog kini dikelola langsung dari database.' });
+});
+
+// ── Admin: cabang ────────────────────────────────────────────────────────────
+const branchCreateInput = z.object({
+  id: z.string().trim().max(50).optional(),
+  name: z.string().trim().min(2).max(100),
+  is_open: z.boolean().optional().default(true),
+});
+
+const branchUpdateInput = z.object({
+  name: z.string().trim().min(2).max(100).optional(),
+  is_open: z.boolean().optional(),
+  active: z.boolean().optional(),
+});
+
+api.get('/admin/branches', auth, (_, res) => {
+  res.json(rows('SELECT id, name, is_open, active FROM branches WHERE active = 1 ORDER BY name'));
+});
+
+api.post('/admin/branches', auth, validate(branchCreateInput), (req, res) => {
+  try {
+    let finalId = req.body.id ? normalize(req.body.id).replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') : '';
+    if (!finalId) {
+      finalId = normalize(req.body.name).replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || ('cabang-' + Date.now());
+    }
+    let counter = 1;
+    const baseId = finalId;
+    while (db.prepare('SELECT 1 FROM branches WHERE id = ?').get(finalId)) {
+      finalId = `${baseId}-${counter++}`;
+    }
+    db.prepare('INSERT INTO branches(id, name, active, is_open) VALUES (?, ?, 1, ?)')
+      .run(finalId, req.body.name, req.body.is_open ? 1 : 0);
+    const branch = db.prepare('SELECT id, name, is_open, active FROM branches WHERE id = ?').get(finalId);
+    res.status(201).json(branch);
+  } catch (error) {
+    res.status(400).json({ error: 'CREATE_BRANCH_FAILED', message: error.message });
+  }
+});
+
+api.patch('/admin/branches/:id', auth, validate(branchUpdateInput), (req, res) => {
+  const current = db.prepare('SELECT * FROM branches WHERE id = ?').get(req.params.id);
+  if (!current) return res.status(404).json({ error: 'BRANCH_NOT_FOUND', message: 'Cabang tidak ditemukan' });
+  const next = {
+    name: req.body.name ?? current.name,
+    is_open: req.body.is_open === undefined ? current.is_open : (req.body.is_open ? 1 : 0),
+    active: req.body.active === undefined ? current.active : (req.body.active ? 1 : 0),
+  };
+  db.prepare('UPDATE branches SET name = ?, is_open = ?, active = ? WHERE id = ?')
+    .run(next.name, next.is_open, next.active, req.params.id);
+  const updated = db.prepare('SELECT id, name, is_open, active FROM branches WHERE id = ?').get(req.params.id);
+  res.json(updated);
+});
+
+api.delete('/admin/branches/:id', auth, (req, res) => {
+  const branch = db.prepare('SELECT * FROM branches WHERE id = ?').get(req.params.id);
+  if (!branch) return res.status(404).json({ error: 'BRANCH_NOT_FOUND', message: 'Cabang tidak ditemukan' });
+
+  const hasOrders = db.prepare('SELECT 1 FROM customer_orders WHERE branch_id = ?').get(req.params.id);
+  const hasComplaints = db.prepare('SELECT 1 FROM customer_complaints WHERE branch_id = ?').get(req.params.id);
+
+  if (hasOrders || hasComplaints) {
+    db.prepare('UPDATE branches SET active = 0 WHERE id = ?').run(req.params.id);
+    return res.json({ ok: true, archived: true, message: 'Cabang dinonaktifkan/diarsipkan karena memiliki riwayat data.' });
+  }
+
+  db.prepare('DELETE FROM branches WHERE id = ?').run(req.params.id);
+  res.json({ ok: true, deleted: true });
 });
 
 
@@ -328,7 +447,13 @@ api.post('/admin/failed-messages/:id/testset', auth, (req, res) => {
 });
 api.post('/public/orders', publicLimiter, validate(orderInput), (req, res) => {
   const create = db.transaction((input) => {
-    if (!db.prepare('SELECT 1 FROM branches WHERE id=? AND active=1').get(input.branchId)) throw new Error('BRANCH_NOT_FOUND');
+    const branch = db.prepare('SELECT id, name, is_open FROM branches WHERE id=? AND active=1').get(input.branchId);
+    if (!branch) throw new Error('BRANCH_NOT_FOUND');
+    if (!branch.is_open) {
+      const err = new Error('BRANCH_CLOSED');
+      err.branchName = branch.name;
+      throw err;
+    }
     const unique = [...new Map(input.items.map(i => [i.menuId, i])).values()];
     const menus = unique.map(i => ({ ...i, menu: db.prepare('SELECT id,name,price,stock FROM menus WHERE id=? AND active=1 AND stock>0').get(i.menuId) }));
     if (menus.some(i => !i.menu)) throw new Error('MENU_NOT_FOUND');
@@ -339,7 +464,14 @@ api.post('/public/orders', publicLimiter, validate(orderInput), (req, res) => {
     menus.forEach(i => add.run(result.lastInsertRowid, i.menu.id, i.menu.name, i.menu.price, i.quantity, i.menu.price * i.quantity));
     return { id: result.lastInsertRowid, referenceNumber: reference, totalAmount: total };
   });
-  try { const order = create(req.body); io.to('admins').emit('order:new', order); res.status(201).json(order); } catch (e) { res.status(422).json({ error: e.message, message: 'Pesanan tidak dapat diproses.' }); }
+  try {
+    const order = create(req.body);
+    io.to('admins').emit('order:new', order);
+    res.status(201).json(order);
+  } catch (e) {
+    const message = e.message === 'BRANCH_CLOSED' ? `Cabang ${e.branchName || ''} saat ini sedang tutup. Silakan pilih cabang lain yang buka.` : 'Pesanan tidak dapat diproses.';
+    res.status(422).json({ error: e.message, message });
+  }
 });
 api.post('/public/complaints', publicLimiter, validate(complaintInput), (req, res) => {
   try { if (req.body.branchId && !db.prepare('SELECT 1 FROM branches WHERE id=? AND active=1').get(req.body.branchId)) throw new Error('BRANCH_NOT_FOUND'); const reference = ref('CMP'); const result = db.prepare('INSERT INTO customer_complaints(reference_number,customer_name,customer_phone,branch_id,category,description,status) VALUES (?,?,?,?,?,?,?)').run(reference, req.body.customerName, req.body.customerPhone, req.body.branchId || null, req.body.category || null, req.body.description, 'NEW'); const complaint = { id: result.lastInsertRowid, referenceNumber: reference }; io.to('admins').emit('complaint:new', complaint); res.status(201).json(complaint); } catch (e) { res.status(422).json({ error: e.message, message: 'Keluhan tidak dapat diproses.' }); }

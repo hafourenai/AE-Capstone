@@ -7,7 +7,7 @@ import { formatMenuList, formatRupiah } from './templates.js';
 
 const NAME_BLOCKLIST = new Set([
   'nama', 'saya', 'aku', 'kak', 'kakak', 'bapak', 'ibu', 'pak', 'bu', 'mas', 'mba',
-  'admin', 'ya', 'tidak', 'batal', 'pesan', 'order', 'menu', 'pusat', 'barat',
+  'admin', 'ya', 'tidak', 'batal', 'pesan', 'order', 'menu',
   'timur', 'utara', 'selatan', 'tengah', 'pesanan', 'makanan',
 ]);
 
@@ -36,7 +36,7 @@ export class BotHandler {
     if (!norm) return null;
 
     const menus = await this.catalog.getMenus();
-    const branches = this.db.prepare('SELECT id, name FROM branches WHERE active = 1').all();
+    const branches = this.db.prepare('SELECT id, name, is_open FROM branches WHERE active = 1').all();
     const settings = this.settings();
 
     const rule = matchRule(norm);
@@ -442,6 +442,14 @@ export class BotHandler {
     if (!draft.branchId) {
       const branch = resolveBranch(norm, branches);
       if (branch) {
+        if (branch.is_open === 0) {
+          const openBranches = branches.filter(b => b.is_open === 1);
+          if (openBranches.length > 0) {
+            const daftarBuka = openBranches.map(b => `• ${b.name}`).join('\n');
+            return this.out(`Mohon maaf Kak, ${branch.name} saat ini sedang tutup. 🙏\n\nCabang kami yang buka saat ini:\n${daftarBuka}\n\nKakak mau pesan dari cabang yang mana?`, 'rules', 'pesan');
+          }
+          return this.out(`Mohon maaf Kak, saat ini semua cabang kami sedang tutup. 🙏\nSilakan hubungi kami kembali saat jam operasional ya Kak.`, 'rules', 'pesan');
+        }
         draft.branchId = branch.id;
         if (!draft.customerName) {
           session.botState = 'ALAMAT_ATAU_AMBIL';
@@ -452,7 +460,7 @@ export class BotHandler {
       }
       session.botState = 'ALAMAT_ATAU_AMBIL';
       this.save(session);
-      const daftar = branches.map((branchItem) => `• ${branchItem.name}`).join('\n');
+      const daftar = branches.map((branchItem) => `• ${branchItem.name}${branchItem.is_open === 0 ? ' (Tutup)' : ''}`).join('\n');
       return this.out(this.templates.render('tanya_cabang', { daftar }), 'rules', 'pesan');
     }
 
@@ -491,7 +499,7 @@ export class BotHandler {
     if (!draft.branchId) {
       session.botState = 'ALAMAT_ATAU_AMBIL';
       this.save(session);
-      const daftar = branches.map((branch) => `• ${branch.name}`).join('\n');
+      const daftar = branches.map((branch) => `• ${branch.name}${branch.is_open === 0 ? ' (Tutup)' : ''}`).join('\n');
       return this.out(this.templates.render('tanya_cabang', { daftar }), 'rules', 'pesan');
     }
     if (!draft.customerName) {
@@ -639,6 +647,10 @@ export class BotHandler {
         nama: draft.customerName,
       }), 'rules', 'pesan', { order });
     } catch (error) {
+      if (error.message === 'BRANCH_CLOSED') {
+        const branchName = error.branchName || 'Cabang yang dipilih';
+        return this.out(`Mohon maaf Kak, ${branchName} saat ini sedang tutup. 🙏 Silakan pilih cabang yang buka ya Kak.`, 'rules', 'pesan');
+      }
       this.logger.error?.(`[bot] Gagal simpan pesanan: ${error.message}`);
       if (/MENU_NOT_FOUND|INSUFFICIENT_STOCK|INVALID_QUANTITY/.test(error.message)) {
         session.botState = 'PILIH_MENU';

@@ -89,3 +89,35 @@ test('catalog: sinkron spreadsheet mengubah SQLite dan alias; kegagalan memperta
   assert.equal((await catalog.sync()).changed, false);
   assert.match(catalog.getStatus().lastError, /turun/);
 });
+
+test('catalog: createMenu auto id, category, dan deleteMenu permanen', (t) => {
+  const db = temporaryDatabase(t);
+  const catalog = new CatalogService({ db });
+
+  const created = catalog.createMenu({
+    name: 'Bebek Madura',
+    category: 'Lauk Satuan',
+    price: 28000,
+    stock: 15,
+    aliases: ['bebek hitam', 'bebek madura asli'],
+  });
+
+  assert.equal(created.id, 'bebek-madura');
+  assert.equal(created.category, 'Lauk Satuan');
+  assert.equal(created.price, 28000);
+  assert.deepEqual(created.aliases.sort(), ['bebek hitam', 'bebek madura asli']);
+
+  const categories = catalog.getCategories();
+  assert.ok(categories.includes('Lauk Satuan'));
+
+  // Update category and price
+  const updated = catalog.updateMenu(created.id, { category: 'Paket Spesial', price: 32000 });
+  assert.equal(updated.category, 'Paket Spesial');
+  assert.equal(updated.price, 32000);
+
+  // Delete permanently
+  const deleted = catalog.deleteMenu(created.id);
+  assert.equal(deleted, true);
+  assert.equal(catalog.getMenu(created.id), null);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM menu_aliases WHERE menu_id = ?").get(created.id).count, 0);
+});

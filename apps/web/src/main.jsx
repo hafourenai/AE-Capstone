@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { io } from 'socket.io-client';
-import { Archive, ArrowUpDown, BrainCircuit, Headphones, LayoutDashboard, LogOut, MessageCircle, Minus, Plus, RotateCcw, Send, Settings, ShoppingCart, Trash2, Wifi, X } from 'lucide-react';
+import { Archive, ArrowUpDown, BrainCircuit, Check, Edit2, Headphones, LayoutDashboard, LogOut, MapPin, MessageCircle, Minus, Plus, PlusCircle, Power, RotateCcw, Search, Send, Settings, ShoppingCart, Store, Trash2, Utensils, Wifi, X } from 'lucide-react';
 import './style.css';
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api/v1';
@@ -95,6 +95,15 @@ function Customer({ mode, setMode }) {
   const setQuantity = (menuId, value) => setQuantities(current => ({ ...current, [menuId]: Math.max(0, Math.min(99, Number(value) || 0)) }));
   const orderCount = Object.values(quantities).reduce((sum, qty) => sum + qty, 0);
   const orderTotal = menus.reduce((sum, menu) => sum + menu.price * (quantities[menu.id] || 0), 0);
+  const groupedMenus = useMemo(() => {
+    const groups = {};
+    menus.forEach(m => {
+      const cat = m.category || 'Lainnya';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(m);
+    });
+    return groups;
+  }, [menus]);
 
   return (
     <div className="customer-page">
@@ -180,7 +189,11 @@ function Customer({ mode, setMode }) {
                 <label htmlFor="f-branch">Cabang</label>
                 <select id="f-branch" name="branch" required={mode === 'order'}>
                   <option value="">Pilih cabang</option>
-                  {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  {branches.map(b => (
+                    <option key={b.id} value={b.id} disabled={b.is_open === 0}>
+                      {b.name}{b.is_open === 0 ? ' (Tutup)' : ''}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -189,18 +202,29 @@ function Customer({ mode, setMode }) {
                   <div className="customer-form-section">
                     <h2>Pilih menu favorit</h2>
                     <p>Isi jumlah untuk menu yang ingin dipesan.</p>
-                    <div className="menu-list">
-                      {menus.map(m => (
-                        <div className={`menu ${quantities[m.id] ? 'selected' : ''}`} key={m.id}>
-                          <span><b>{m.name}</b><small>{currency(m.price)}</small></span>
-                          <div className="quantity-stepper" aria-label={`Jumlah ${m.name}`}>
-                            <button type="button" onClick={() => setQuantity(m.id, (quantities[m.id] || 0) - 1)} aria-label={`Kurangi ${m.name}`}><Minus /></button>
-                            <input name={`qty-${m.id}`} type="number" min="0" max="99" value={quantities[m.id] || 0} onChange={event => setQuantity(m.id, event.target.value)} />
-                            <button type="button" onClick={() => setQuantity(m.id, (quantities[m.id] || 0) + 1)} aria-label={`Tambah ${m.name}`}><Plus /></button>
+                    <div className="menu-groups">
+                      {Object.entries(groupedMenus).map(([category, items]) => (
+                        <div key={category} className="menu-group-block">
+                          <h3 className="menu-group-title">{category}</h3>
+                          <div className="menu-list">
+                            {items.map(m => (
+                              <div className={`menu ${quantities[m.id] ? 'selected' : ''}`} key={m.id}>
+                                <span>
+                                  <b>{m.name}</b>
+                                  {m.description && <small className="menu-desc">{m.description}</small>}
+                                  <small className="menu-price">{currency(m.price)}</small>
+                                </span>
+                                <div className="quantity-stepper" aria-label={`Jumlah ${m.name}`}>
+                                  <button type="button" onClick={() => setQuantity(m.id, (quantities[m.id] || 0) - 1)} aria-label={`Kurangi ${m.name}`}><Minus /></button>
+                                  <input name={`qty-${m.id}`} type="number" min="0" max="99" value={quantities[m.id] || 0} onChange={event => setQuantity(m.id, event.target.value)} />
+                                  <button type="button" onClick={() => setQuantity(m.id, (quantities[m.id] || 0) + 1)} aria-label={`Tambah ${m.name}`}><Plus /></button>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       ))}
-                       {!menus.length && <p>{catalogLoading ? 'Memuat menu…' : catalogError ? 'Gagal memuat menu.' : 'Menu belum tersedia. Silakan coba lagi nanti.'}</p>}
+                      {!menus.length && <p>{catalogLoading ? 'Memuat menu…' : catalogError ? 'Gagal memuat menu.' : 'Menu belum tersedia. Silakan coba lagi nanti.'}</p>}
                     </div>
                   </div>
                   <div className="form-field">
@@ -391,45 +415,235 @@ function SourceBadge({ source }) {
 // ─────────────────────── Admin: katalog & pengaturan ────────────────────────
 
 function CatalogSettings({ token, onError }) {
+  const [tab, setTab] = useState('menu');
   const [menus, setMenus] = useState([]);
-  const [syncStatus, setSyncStatus] = useState(null);
+  const [branches, setBranches] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [settings, setSettings] = useState({ opening_hours: '', address: '', phone: '', business_name: '' });
   const [templates, setTemplates] = useState({});
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // Search & filter for menu
+  const [menuSearch, setMenuSearch] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+
+  // Modal for Add/Edit Menu
+  const [menuModal, setMenuModal] = useState(null);
+  const [menuForm, setMenuForm] = useState({
+    id: '',
+    name: '',
+    category: 'Lainnya',
+    price: 15000,
+    stock: 999,
+    active: true,
+    description: '',
+    aliasesText: '',
+  });
+
+  // Modal for Add Branch
+  const [branchModal, setBranchModal] = useState(false);
+  const [branchForm, setBranchForm] = useState({ name: '', is_open: true });
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [menuList, settingMap, templateMap, status] = await Promise.all([
-        request('/admin/menus', { headers: { Authorization: `Bearer ${token}` } }),
-        request('/admin/settings', { headers: { Authorization: `Bearer ${token}` } }),
-        request('/admin/templates', { headers: { Authorization: `Bearer ${token}` } }),
-        request('/admin/menu-sync-status', { headers: { Authorization: `Bearer ${token}` } }),
+      const headers = { Authorization: `Bearer ${token}` };
+      const [menuList, branchList, catList, settingMap, templateMap] = await Promise.all([
+        request('/admin/menus', { headers }),
+        request('/admin/branches', { headers }),
+        request('/admin/menu-categories', { headers }),
+        request('/admin/settings', { headers }),
+        request('/admin/templates', { headers }),
       ]);
       setMenus(menuList);
+      setBranches(branchList);
+      setCategories(catList || []);
       setSettings(prev => ({ ...prev, ...settingMap }));
       setTemplates(templateMap);
-      setSyncStatus(status);
-    } catch (error) { onError(error.message); }
-    finally { setLoading(false); }
+    } catch (error) {
+      onError(error.message);
+    } finally {
+      setLoading(false);
+    }
   }, [token, onError]);
 
   useEffect(() => { load(); }, [load]);
 
-  const flash = (message) => { setNotice(message); setTimeout(() => setNotice(''), 2500); };
+  const flash = (message) => { setNotice(message); setTimeout(() => setNotice(''), 3000); };
 
-  const syncMenu = async () => {
-    try {
-      setSaving(true);
-      const result = await request('/admin/menu-sync', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
-      await load();
-      if (!result.changed) onError(result.errors?.join(', ') || 'Menu belum berubah.');
-      else flash('Menu dari spreadsheet diperbarui.');
-    } catch (error) { onError(error.message); } finally { setSaving(false); }
+  // Menu operations
+  const openAddMenu = () => {
+    setMenuForm({
+      id: '',
+      name: '',
+      category: categories[0] || 'Paket',
+      price: 15000,
+      stock: 999,
+      active: true,
+      description: '',
+      aliasesText: '',
+    });
+    setMenuModal({ mode: 'create' });
   };
 
+  const openEditMenu = (menu) => {
+    setMenuForm({
+      id: menu.id,
+      name: menu.name,
+      category: menu.category || 'Lainnya',
+      price: menu.price,
+      stock: menu.stock,
+      active: Boolean(menu.active),
+      description: menu.description || '',
+      aliasesText: Array.isArray(menu.aliases) ? menu.aliases.join(', ') : '',
+    });
+    setMenuModal({ mode: 'edit', id: menu.id });
+  };
+
+  const handleSaveMenu = async (e) => {
+    e.preventDefault();
+    try {
+      setSaving(true);
+      const aliases = menuForm.aliasesText
+        ? menuForm.aliasesText.split(/[,|\n]/).map(s => s.trim()).filter(Boolean)
+        : [];
+      const payload = {
+        name: menuForm.name,
+        category: menuForm.category,
+        price: Number(menuForm.price),
+        stock: Number(menuForm.stock),
+        active: Boolean(menuForm.active),
+        description: menuForm.description,
+        aliases,
+      };
+
+      if (menuModal.mode === 'create') {
+        await request('/admin/menus', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload),
+        });
+        flash(`Menu "${menuForm.name}" berhasil ditambahkan.`);
+      } else {
+        await request(`/admin/menus/${menuModal.id}`, {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload),
+        });
+        flash(`Menu "${menuForm.name}" berhasil diperbarui.`);
+      }
+      setMenuModal(null);
+      await load();
+    } catch (error) {
+      onError(error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteMenu = async (menu) => {
+    if (!window.confirm(`Yakin ingin menghapus permanen menu "${menu.name}"?\nData riwayat pesanan terdahulu akan tetap aman.`)) {
+      return;
+    }
+    try {
+      setSaving(true);
+      await request(`/admin/menus/${menu.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      flash(`Menu "${menu.name}" berhasil dihapus permanen.`);
+      await load();
+    } catch (error) {
+      onError(error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleMenuActive = async (menu) => {
+    try {
+      setSaving(true);
+      await request(`/admin/menus/${menu.id}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ active: !menu.active }),
+      });
+      flash(`Menu "${menu.name}" sekarang ${!menu.active ? 'Aktif' : 'Nonaktif'}.`);
+      await load();
+    } catch (error) {
+      onError(error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Branch operations
+  const handleSaveBranch = async (e) => {
+    e.preventDefault();
+    if (!branchForm.name.trim()) return;
+    try {
+      setSaving(true);
+      await request('/admin/branches', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: branchForm.name.trim(), is_open: branchForm.is_open }),
+      });
+      flash(`Cabang "${branchForm.name}" berhasil ditambahkan.`);
+      setBranchForm({ name: '', is_open: true });
+      setBranchModal(false);
+      await load();
+    } catch (error) {
+      onError(error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleBranchOpen = async (branch) => {
+    try {
+      setSaving(true);
+      const nextIsOpen = branch.is_open === 1 ? false : true;
+      await request(`/admin/branches/${branch.id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ is_open: nextIsOpen }),
+      });
+      flash(`Cabang "${branch.name}" sekarang ${nextIsOpen ? 'BUKA' : 'TUTUP'}.`);
+      await load();
+    } catch (error) {
+      onError(error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteBranch = async (branch) => {
+    if (!window.confirm(`Yakin ingin menghapus cabang "${branch.name}"?`)) {
+      return;
+    }
+    try {
+      setSaving(true);
+      const res = await request(`/admin/branches/${branch.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res?.archived) {
+        flash(`Cabang "${branch.name}" dinonaktifkan karena memiliki riwayat data.`);
+      } else {
+        flash(`Cabang "${branch.name}" berhasil dihapus.`);
+      }
+      await load();
+    } catch (error) {
+      onError(error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Settings & Templates operations
   const saveSettings = async (event) => {
     event.preventDefault();
     try {
@@ -439,7 +653,7 @@ function CatalogSettings({ token, onError }) {
         headers: { Authorization: `Bearer ${token}` },
         body: JSON.stringify(settings),
       });
-      flash('Jam buka & lokasi disimpan.');
+      flash('Informasi jam buka & usaha berhasil disimpan.');
     } catch (error) { onError(error.message); } finally { setSaving(false); }
   };
 
@@ -451,64 +665,395 @@ function CatalogSettings({ token, onError }) {
         headers: { Authorization: `Bearer ${token}` },
         body: JSON.stringify({ content }),
       });
-      flash(`Template ${key} disimpan.`);
+      flash(`Template "${key}" disimpan.`);
     } catch (error) { onError(error.message); } finally { setSaving(false); }
   };
 
+  // Filtered menus
+  const filteredMenus = useMemo(() => {
+    return menus.filter(m => {
+      if (menuSearch) {
+        const q = menuSearch.toLowerCase();
+        const matchName = m.name?.toLowerCase().includes(q);
+        const matchId = m.id?.toLowerCase().includes(q);
+        const matchCat = m.category?.toLowerCase().includes(q);
+        const matchAliases = Array.isArray(m.aliases) && m.aliases.some(a => a.toLowerCase().includes(q));
+        if (!matchName && !matchId && !matchCat && !matchAliases) return false;
+      }
+      if (selectedCategory && (m.category || 'Lainnya') !== selectedCategory) return false;
+      if (statusFilter === 'active' && !m.active) return false;
+      if (statusFilter === 'inactive' && m.active) return false;
+      return true;
+    });
+  }, [menus, menuSearch, selectedCategory, statusFilter]);
+
   return (
     <div className="settings-stack">
-      {notice && <p className="settings-notice">{notice}</p>}
+      {notice && <p className="settings-notice" role="alert">{notice}</p>}
       {loading && <p role="status">Memuat pengaturan…</p>}
-      {!loading && !syncStatus && <button type="button" onClick={load}>Muat ulang pengaturan</button>}
 
-      <section className="data-panel settings-panel">
-        <div className="panel-heading">
-          <div><p className="eyebrow">KATALOG</p><h2>Menu dari Google Sheets</h2></div>
-          <span className="panel-count">{menus.length} menu</span>
-        </div>
-        <p className="field-help">Edit nama, harga, stok, status, dan alias langsung di spreadsheet. SQLite mengikuti perubahan otomatis setiap beberapa menit.</p>
-        <p className="field-help">Sinkron terakhir: {syncStatus?.lastSuccessAt ? formatDateTime(syncStatus.lastSuccessAt) : 'Belum berhasil'} {syncStatus?.stale ? '· Data mungkin belum terbaru' : ''}</p>
-        {syncStatus?.errors?.map((message, index) => <p className="error" key={index}>{message}</p>)}
-        <button type="button" onClick={syncMenu} disabled={saving}>Sinkron sekarang</button>
-        <div className="settings-rows">
-          {menus.map(menu => (
-            <div className="settings-row" key={menu.id}>
-              <div className="settings-row-head"><b>{menu.name}</b><small>{menu.id}</small></div>
-              <p>{currency(menu.price)} · Stok {menu.stock} · {menu.active ? 'Aktif' : 'Nonaktif'}</p>
+      {/* Subtab Navigation */}
+      <nav className="settings-nav-bar" aria-label="Navigasi Pengaturan">
+        <button
+          type="button"
+          className={`subtab-btn ${tab === 'menu' ? 'active' : ''}`}
+          onClick={() => setTab('menu')}
+        >
+          <Utensils size={15} /> Katalog Menu <span className="subtab-badge">{menus.length}</span>
+        </button>
+        <button
+          type="button"
+          className={`subtab-btn ${tab === 'branches' ? 'active' : ''}`}
+          onClick={() => setTab('branches')}
+        >
+          <Store size={15} /> Cabang Restoran <span className="subtab-badge">{branches.length}</span>
+        </button>
+        <button
+          type="button"
+          className={`subtab-btn ${tab === 'info' ? 'active' : ''}`}
+          onClick={() => setTab('info')}
+        >
+          <MapPin size={15} /> Info Usaha
+        </button>
+        <button
+          type="button"
+          className={`subtab-btn ${tab === 'templates' ? 'active' : ''}`}
+          onClick={() => setTab('templates')}
+        >
+          <MessageCircle size={15} /> Template Bot <span className="subtab-badge">{Object.keys(templates).length}</span>
+        </button>
+      </nav>
+
+      {/* Tab 1: Menu Makanan */}
+      {tab === 'menu' && (
+        <section className="data-panel settings-panel">
+          <div className="panel-heading settings-heading">
+            <div>
+              <p className="eyebrow">DATABASE SQLITE</p>
+              <h2>Katalog Menu Restoran</h2>
             </div>
-          ))}
-          {!menus.length && <p className="field-help">Belum ada menu tersimpan. Periksa URL spreadsheet dan status sinkronisasi.</p>}
-        </div>
-      </section>
+            <button type="button" className="action-btn-primary" onClick={openAddMenu}>
+              <PlusCircle size={15} /> Tambah Menu Baru
+            </button>
+          </div>
 
-      <section className="data-panel settings-panel">
-        <div className="panel-heading">
-          <div><p className="eyebrow">INFORMASI</p><h2>Jam buka &amp; lokasi</h2></div>
-        </div>
-        <form className="settings-form" onSubmit={saveSettings}>
-          <label>Nama usaha<input value={settings.business_name || ''} onChange={e => setSettings({ ...settings, business_name: e.target.value })} /></label>
-          <label>Jam buka<input value={settings.opening_hours || ''} onChange={e => setSettings({ ...settings, opening_hours: e.target.value })} placeholder="Setiap hari 09.00–21.00" /></label>
-          <label>Alamat<input value={settings.address || ''} onChange={e => setSettings({ ...settings, address: e.target.value })} placeholder="Jl. ..." /></label>
-          <label>Telepon<input value={settings.phone || ''} onChange={e => setSettings({ ...settings, phone: e.target.value })} /></label>
-          <button disabled={saving}>Simpan informasi</button>
-        </form>
-      </section>
-
-      <section className="data-panel settings-panel">
-        <div className="panel-heading">
-          <div><p className="eyebrow">BOT</p><h2>Template pesan</h2></div>
-          <span className="panel-count">{Object.keys(templates).length} template</span>
-        </div>
-        <div className="settings-rows">
-          {Object.entries(templates).map(([key, content]) => (
-            <div className="settings-row" key={key}>
-              <div className="settings-row-head"><b>{key}</b></div>
-              <label>Isi template<textarea defaultValue={content} onBlur={e => saveTemplate(key, e.target.value)} /></label>
+          <div className="menu-toolbar">
+            <div className="search-box">
+              <Search size={14} />
+              <input
+                type="text"
+                placeholder="Cari nama menu, id, atau alias..."
+                value={menuSearch}
+                onChange={e => setMenuSearch(e.target.value)}
+              />
+              {menuSearch && <button type="button" onClick={() => setMenuSearch('')} aria-label="Hapus pencarian">×</button>}
             </div>
-          ))}
-          {!Object.keys(templates).length && <p className="field-help">Template akan muncul di sini setelah diinisialisasi backend.</p>}
-        </div>
-      </section>
+            <select value={selectedCategory} onChange={e => setSelectedCategory(e.target.value)}>
+              <option value="">Semua Kategori ({categories.length})</option>
+              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+              <option value="">Semua Status</option>
+              <option value="active">Aktif</option>
+              <option value="inactive">Nonaktif</option>
+            </select>
+          </div>
+
+          <div className="admin-table-container">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Menu &amp; Deskripsi</th>
+                  <th>Kategori</th>
+                  <th>Harga</th>
+                  <th>Stok</th>
+                  <th>Status</th>
+                  <th style={{ textAlign: 'right' }}>Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredMenus.map(menu => (
+                  <tr key={menu.id} className={menu.active ? '' : 'row-muted'}>
+                    <td>
+                      <div className="menu-title-cell">
+                        <b>{menu.name}</b>
+                        <span className="menu-id-tag">{menu.id}</span>
+                      </div>
+                      {menu.description && <p className="menu-desc-text">{menu.description}</p>}
+                      {menu.aliases?.length > 0 && (
+                        <div className="menu-aliases-list">
+                          <small>Alias: </small>
+                          {menu.aliases.map((a, i) => (
+                            <span key={i} className="alias-chip">{a}</span>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    <td><span className="category-badge">{menu.category || 'Lainnya'}</span></td>
+                    <td className="price-cell">{currency(menu.price)}</td>
+                    <td>
+                      <span className={`stock-badge ${menu.stock < 10 ? 'low' : ''}`}>
+                        {menu.stock}
+                      </span>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className={`status-toggle ${menu.active ? 'active' : 'inactive'}`}
+                        onClick={() => toggleMenuActive(menu)}
+                        title="Klik untuk ubah status aktif/nonaktif"
+                      >
+                        {menu.active ? 'Aktif' : 'Nonaktif'}
+                      </button>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <div className="row-actions">
+                        <button type="button" className="btn-icon" onClick={() => openEditMenu(menu)} title="Edit Menu">
+                          <Edit2 size={14} />
+                        </button>
+                        <button type="button" className="btn-icon danger" onClick={() => handleDeleteMenu(menu)} title="Hapus Permanen">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {!filteredMenus.length && (
+                  <tr>
+                    <td colSpan="6" className="table-empty">
+                      {menus.length ? 'Tidak ada menu yang sesuai dengan filter pencarian.' : 'Belum ada menu tersimpan di database.'}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Modal Add / Edit Menu */}
+          {menuModal && (
+            <div className="modal-overlay" onClick={() => setMenuModal(null)}>
+              <div className="modal-dialog" onClick={e => e.stopPropagation()}>
+                <div className="modal-header">
+                  <h3>{menuModal.mode === 'create' ? 'Tambah Menu Baru' : 'Edit Menu Makanan'}</h3>
+                  <button type="button" className="close-btn" onClick={() => setMenuModal(null)}>×</button>
+                </div>
+                <form onSubmit={handleSaveMenu} className="modal-form">
+                  <div className="form-grid">
+                    <label className="span-2">
+                      Nama Menu *
+                      <input
+                        required
+                        value={menuForm.name}
+                        onChange={e => setMenuForm({ ...menuForm, name: e.target.value })}
+                        placeholder="Contoh: Bebek Goreng Sambal Korek"
+                      />
+                    </label>
+                    <label>
+                      Kategori *
+                      <input
+                        required
+                        list="category-suggestions"
+                        value={menuForm.category}
+                        onChange={e => setMenuForm({ ...menuForm, category: e.target.value })}
+                        placeholder="Pilih atau ketik kategori..."
+                      />
+                      <datalist id="category-suggestions">
+                        <option value="Paket" />
+                        <option value="Lauk Satuan" />
+                        <option value="Minuman" />
+                        <option value="Tambahan" />
+                        <option value="Lainnya" />
+                        {categories.map(c => <option key={c} value={c} />)}
+                      </datalist>
+                    </label>
+                    <label>
+                      Harga Satuan (Rp) *
+                      <input
+                        required
+                        type="number"
+                        min="0"
+                        step="500"
+                        value={menuForm.price}
+                        onChange={e => setMenuForm({ ...menuForm, price: e.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Stok
+                      <input
+                        type="number"
+                        min="0"
+                        value={menuForm.stock}
+                        onChange={e => setMenuForm({ ...menuForm, stock: e.target.value })}
+                      />
+                    </label>
+                    <label className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={menuForm.active}
+                        onChange={e => setMenuForm({ ...menuForm, active: e.target.checked })}
+                      />
+                      Menu Aktif (Dapat Dipesan)
+                    </label>
+                    <label className="span-2">
+                      Deskripsi Menu
+                      <textarea
+                        rows="2"
+                        value={menuForm.description}
+                        onChange={e => setMenuForm({ ...menuForm, description: e.target.value })}
+                        placeholder="Contoh: Daging bebek empuk disajikan dengan serundeng gurih dan sambal pedas."
+                      />
+                    </label>
+                    <label className="span-2">
+                      Alias / Variasi Nama Bot (Pisahkan dengan koma)
+                      <input
+                        value={menuForm.aliasesText}
+                        onChange={e => setMenuForm({ ...menuForm, aliasesText: e.target.value })}
+                        placeholder="Contoh: bebek, bebek goreng, bebek madura"
+                      />
+                      <small className="field-hint">Kata kunci alternatif agar bot WhatsApp langsung mengenali pesanan pelanggan.</small>
+                    </label>
+                  </div>
+                  <div className="modal-actions">
+                    <button type="button" className="btn-secondary" onClick={() => setMenuModal(null)}>Batal</button>
+                    <button type="submit" className="action-btn-primary" disabled={saving}>
+                      {menuModal.mode === 'create' ? 'Tambah Menu' : 'Simpan Perubahan'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Tab 2: Cabang Restoran */}
+      {tab === 'branches' && (
+        <section className="data-panel settings-panel">
+          <div className="panel-heading settings-heading">
+            <div>
+              <p className="eyebrow">PENGATURAN CABANG</p>
+              <h2>Manajemen Cabang Restoran</h2>
+            </div>
+            <button type="button" className="action-btn-primary" onClick={() => setBranchModal(true)}>
+              <PlusCircle size={15} /> Tambah Cabang
+            </button>
+          </div>
+
+          <div className="branches-grid">
+            {branches.map(branch => (
+              <div key={branch.id} className={`branch-card ${branch.is_open ? 'is-open' : 'is-closed'}`}>
+                <div className="branch-card-header">
+                  <div>
+                    <h3>{branch.name}</h3>
+                    <span className="branch-id-code">ID: {branch.id}</span>
+                  </div>
+                  <span className={`branch-status-badge ${branch.is_open ? 'open' : 'closed'}`}>
+                    {branch.is_open ? 'Buka' : 'Tutup'}
+                  </span>
+                </div>
+                <p className="branch-card-desc">
+                  {branch.is_open
+                    ? 'Cabang ini beroperasi normal dan menerima pesanan dari web maupun bot WhatsApp.'
+                    : 'Cabang ditutup sementara. Pelanggan yang memesan cabang ini akan diberi tahu dan diarahkan ke cabang buka.'}
+                </p>
+                <div className="branch-card-actions">
+                  <button
+                    type="button"
+                    className={`toggle-open-btn ${branch.is_open ? 'action-close' : 'action-open'}`}
+                    onClick={() => toggleBranchOpen(branch)}
+                    disabled={saving}
+                  >
+                    <Power size={14} />
+                    {branch.is_open ? 'Tutup Cabang Sementara' : 'Buka Cabang Sekarang'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-icon danger"
+                    onClick={() => handleDeleteBranch(branch)}
+                    title="Hapus Cabang"
+                    disabled={saving}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            ))}
+            {!branches.length && (
+              <p className="field-help">Belum ada cabang terdaftar. Silakan tambahkan cabang baru.</p>
+            )}
+          </div>
+
+          {/* Modal Add Branch */}
+          {branchModal && (
+            <div className="modal-overlay" onClick={() => setBranchModal(false)}>
+              <div className="modal-dialog small" onClick={e => e.stopPropagation()}>
+                <div className="modal-header">
+                  <h3>Tambah Cabang Baru</h3>
+                  <button type="button" className="close-btn" onClick={() => setBranchModal(false)}>×</button>
+                </div>
+                <form onSubmit={handleSaveBranch} className="modal-form">
+                  <label>
+                    Nama Cabang *
+                    <input
+                      required
+                      value={branchForm.name}
+                      onChange={e => setBranchForm({ ...branchForm, name: e.target.value })}
+                      placeholder="Contoh: Cabang Selatan"
+                    />
+                  </label>
+                  <label className="checkbox-label" style={{ marginTop: 12 }}>
+                    <input
+                      type="checkbox"
+                      checked={branchForm.is_open}
+                      onChange={e => setBranchForm({ ...branchForm, is_open: e.target.checked })}
+                    />
+                    Status Awal: Langsung Buka
+                  </label>
+                  <div className="modal-actions">
+                    <button type="button" className="btn-secondary" onClick={() => setBranchModal(false)}>Batal</button>
+                    <button type="submit" className="action-btn-primary" disabled={saving}>Simpan Cabang</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Tab 3: Info Usaha */}
+      {tab === 'info' && (
+        <section className="data-panel settings-panel">
+          <div className="panel-heading settings-heading">
+            <div><p className="eyebrow">INFORMASI BISNIS</p><h2>Jam buka &amp; lokasi</h2></div>
+          </div>
+          <form className="settings-form" onSubmit={saveSettings}>
+            <label>Nama usaha<input value={settings.business_name || ''} onChange={e => setSettings({ ...settings, business_name: e.target.value })} /></label>
+            <label>Jam operasional<input value={settings.opening_hours || ''} onChange={e => setSettings({ ...settings, opening_hours: e.target.value })} placeholder="Setiap hari 09.00–21.00" /></label>
+            <label>Alamat usaha<input value={settings.address || ''} onChange={e => setSettings({ ...settings, address: e.target.value })} placeholder="Jl. ..." /></label>
+            <label>Nomor telepon / WhatsApp<input value={settings.phone || ''} onChange={e => setSettings({ ...settings, phone: e.target.value })} /></label>
+            <button className="action-btn-primary" style={{ justifySelf: 'start', marginTop: 10 }} disabled={saving}>Simpan Informasi Usaha</button>
+          </form>
+        </section>
+      )}
+
+      {/* Tab 4: Template Bot */}
+      {tab === 'templates' && (
+        <section className="data-panel settings-panel">
+          <div className="panel-heading settings-heading">
+            <div><p className="eyebrow">INTEGRASI BOT WHATSAPP</p><h2>Template pesan bot</h2></div>
+            <span className="panel-count">{Object.keys(templates).length} template</span>
+          </div>
+          <div className="settings-rows">
+            {Object.entries(templates).map(([key, content]) => (
+              <div className="settings-row" key={key}>
+                <div className="settings-row-head"><b>{key}</b></div>
+                <label>Isi template balasan<textarea defaultValue={content} onBlur={e => saveTemplate(key, e.target.value)} /></label>
+              </div>
+            ))}
+            {!Object.keys(templates).length && <p className="field-help">Template akan muncul di sini setelah diinisialisasi backend.</p>}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -1024,91 +1569,93 @@ function AdminSession({ token, onLogout }) {
                   <button onClick={() => setDetail(null)} aria-label="Tutup detail">×</button>
                 </div>
 
-                <div className="customer-card">
-                  <small>Pelanggan</small>
-                  <b>{detail.customer_name || 'Pelanggan WhatsApp'}</b>
-                  <span>{detail.customer_phone || detail.phone}</span>
-                  {detail.created_at && (
-                    <div className="detail-timestamp">
-                      <small>Waktu Masuk</small>
-                      <span>{formatDateTime(detail.created_at)}</span>
-                    </div>
-                  )}
-                </div>
-
-                {detail.items?.length > 0 && (
-                  <div className="order-items">
-                    <small>Rincian pesanan</small>
-                    {detail.items.map(i => (
-                      <div key={i.id}>
-                        <span>{i.menu_name_snapshot} × {i.quantity}</span>
-                        <b>{currency(i.subtotal)}</b>
-                      </div>
-                    ))}
-                    {detail.total_amount && (
-                      <div style={{ borderBottom: 'none', fontWeight: 600 }}>
-                        <span>Total</span>
-                        <b>{currency(detail.total_amount)}</b>
+                <div className="detail-body">
+                  <div className="customer-card">
+                    <small>Pelanggan</small>
+                    <b>{detail.customer_name || 'Pelanggan WhatsApp'}</b>
+                    <span>{detail.customer_phone || detail.phone}</span>
+                    {detail.created_at && (
+                      <div className="detail-timestamp">
+                        <small>Waktu Masuk</small>
+                        <span>{formatDateTime(detail.created_at)}</span>
                       </div>
                     )}
                   </div>
-                )}
 
-                {kind === 'whatsapp' ? (
-                  <>
-                    <label>
-                      Mode percakapan
-                      <select disabled={saving} value={detail.state} onChange={change}>
-                        <option value="AI_ACTIVE">AI aktif</option>
-                        <option value="WAITING_ADMIN">Menunggu admin</option>
-                        <option value="ADMIN_ACTIVE">Admin aktif</option>
-                      </select>
-                    </label>
-                    <p className="field-help">Mode admin bersifat sementara. AI akan aktif kembali otomatis setelah jeda berakhir.</p>
-                    <button className="primary-action" onClick={() => setChatConv(detail)}>
-                      <MessageCircle size={15} style={{ marginRight: 6, verticalAlign: 'middle' }} />
-                      Buka percakapan →
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <label>
-                      Status
-                      <select disabled={saving} value={detail.status} onChange={change}>
-                        {statusOptions.map(s => <option value={s} key={s}>{statusLabel(s)}</option>)}
-                      </select>
-                    </label>
-                    {detail.source && <SourceBadge source={detail.source} />}
-                    {detail.source === 'WHATSAPP' && detail.whatsapp_conversation_id && (
-                      <button className="primary-action chat-link" onClick={() => setChatConv({ id: detail.whatsapp_conversation_id })}>
-                        <MessageCircle size={16} /> Buka percakapan
-                      </button>
-                    )}
-                    {kind === 'complaints' && (
+                  {detail.items?.length > 0 && (
+                    <div className="order-items">
+                      <small>Rincian pesanan</small>
+                      {detail.items.map(i => (
+                        <div key={i.id}>
+                          <span>{i.menu_name_snapshot} × {i.quantity}</span>
+                          <b>{currency(i.subtotal)}</b>
+                        </div>
+                      ))}
+                      {detail.total_amount && (
+                        <div style={{ borderBottom: 'none', fontWeight: 600 }}>
+                          <span>Total</span>
+                          <b>{currency(detail.total_amount)}</b>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {kind === 'whatsapp' ? (
+                    <>
                       <label>
-                        Catatan internal
-                        <textarea
-                          defaultValue={detail.admin_notes || ''}
-                          onBlur={async e => {
-                            try {
-                              await request(`/admin/complaints/${detail.id}/notes`, {
-                                method: 'PATCH',
-                                headers: { Authorization: `Bearer ${token}` },
-                                body: JSON.stringify({ adminNotes: e.target.value || null }),
-                              });
-                            } catch (noteError) { setError(noteError.message); }
-                          }}
-                        />
+                        Mode percakapan
+                        <select disabled={saving} value={detail.state} onChange={change}>
+                          <option value="AI_ACTIVE">AI aktif</option>
+                          <option value="WAITING_ADMIN">Menunggu admin</option>
+                          <option value="ADMIN_ACTIVE">Admin aktif</option>
+                        </select>
                       </label>
-                    )}
-                    {kind === 'complaints' && detail.description && (
-                      <div style={{ marginTop: 16 }}>
-                        <small style={{ color: '#817a76', fontSize: '.63rem', textTransform: 'uppercase', letterSpacing: '.08em' }}>Deskripsi Keluhan</small>
-                        <p style={{ marginTop: 6, fontSize: '.75rem', lineHeight: 1.6, color: '#333' }}>{detail.description}</p>
-                      </div>
-                    )}
-                  </>
-                )}
+                      <p className="field-help">Mode admin bersifat sementara. AI akan aktif kembali otomatis setelah jeda berakhir.</p>
+                      <button className="primary-action" onClick={() => setChatConv(detail)}>
+                        <MessageCircle size={16} />
+                        Buka percakapan →
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <label>
+                        Status
+                        <select disabled={saving} value={detail.status} onChange={change}>
+                          {statusOptions.map(s => <option value={s} key={s}>{statusLabel(s)}</option>)}
+                        </select>
+                      </label>
+                      {detail.source && <SourceBadge source={detail.source} />}
+                      {detail.source === 'WHATSAPP' && detail.whatsapp_conversation_id && (
+                        <button className="primary-action chat-link" onClick={() => setChatConv({ id: detail.whatsapp_conversation_id })}>
+                          <MessageCircle size={16} /> Buka percakapan
+                        </button>
+                      )}
+                      {kind === 'complaints' && (
+                        <label>
+                          Catatan internal
+                          <textarea
+                            defaultValue={detail.admin_notes || ''}
+                            onBlur={async e => {
+                              try {
+                                await request(`/admin/complaints/${detail.id}/notes`, {
+                                  method: 'PATCH',
+                                  headers: { Authorization: `Bearer ${token}` },
+                                  body: JSON.stringify({ adminNotes: e.target.value || null }),
+                                });
+                              } catch (noteError) { setError(noteError.message); }
+                            }}
+                          />
+                        </label>
+                      )}
+                      {kind === 'complaints' && detail.description && (
+                        <div style={{ marginTop: 16 }}>
+                          <small style={{ color: '#817a76', fontSize: '.63rem', textTransform: 'uppercase', letterSpacing: '.08em' }}>Deskripsi Keluhan</small>
+                          <p style={{ marginTop: 6, fontSize: '.75rem', lineHeight: 1.6, color: '#333' }}>{detail.description}</p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
               </aside>
             ) : null}
           </div>
