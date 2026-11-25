@@ -32,7 +32,8 @@ export class BotHandler {
     if (!session) return null;
     if (session.handoff || session.botState === 'HANDOFF') return null;
 
-    const norm = providedNorm ?? normalize(raw);
+    const lowerRaw = String(raw ?? '').toLowerCase();
+    const norm = providedNorm ? normalize(providedNorm) : normalize(lowerRaw);
     if (!norm) return null;
 
     const menus = await this.catalog.getMenus();
@@ -74,7 +75,7 @@ export class BotHandler {
     }
     if (rule?.type === 'batal') return this.cancel(session);
     if (rule?.type === 'jam') return this.jam(session, settings);
-    if (rule?.type === 'lokasi') return this.lokasi(session, settings);
+    if (rule?.type === 'lokasi') return this.lokasi(session, settings, branches);
 
     // Menu utama deterministik:
     // Jika pelanggan berada di state IDLE dan mengirim angka 1, 2, atau 3
@@ -204,6 +205,22 @@ export class BotHandler {
     const contextualUpdate = this.applyContextualQuantityUpdate(session, norm, menus, branches);
     if (contextualUpdate) return contextualUpdate;
 
+    // Jika sedang menunggu pilihan cabang (belum ada branchId), prioritaskan pencocokan cabang
+    // kecuali pelanggan secara eksplisit meminta tambah/ubah menu.
+    if (session.botState === 'ALAMAT_ATAU_AMBIL' && !session.draft.branchId && !/\b(tambah|tambahkan|kurangi|hapus)\b/.test(norm)) {
+      const branch = resolveBranch(norm, branches) || resolveBranch(lowerRaw, branches);
+      if (branch) return this.applyBranchSelection(session, branch, branches, menus);
+    }
+
+    // Jika pelanggan meminta ganti/pindah cabang saat sudah ada pesanan di draft
+    if (session.draft.items.length > 0 && /\b(?:(?:ganti|ubah|pindah)\s+(?:ke\s+)?(?:cabang|cbng|cbg|outlet)?|(?:cabang|cbng|cbg|outlet))\b/.test(norm)) {
+      const explicitBranchSwitch = /\b(ganti|ubah|pindah)\b/.test(norm);
+      if (explicitBranchSwitch) {
+        const branch = resolveBranch(norm, branches) || resolveBranch(lowerRaw, branches);
+        if (branch) return this.applyBranchSelection(session, branch, branches, menus);
+      }
+    }
+
     // Proses menu sebelum menganggap pesan sebagai jawaban cabang/nama. Dengan
     // demikian "tambah mie goreng 2" tetap mengubah draft pada state apa pun.
     const match = await this.matcher.search(norm);
@@ -219,6 +236,14 @@ export class BotHandler {
       const missingQty = match.matches.find((item) => !item.qty);
       for (const item of match.matches) {
         if (item.qty) this.putMatchedItem(session, item, norm);
+      }
+      // Jika pelanggan sekaligus menyebutkan cabang dalam pesan order ("gdg 2 cabang pusat")
+      if (!session.draft.branchId && /\b(cabang|cbng|cbg|outlet)\s+/.test(norm)) {
+        const branchPart = norm.match(/\b(?:cabang|cbng|cbg|outlet)\s+(.+)$/)?.[1];
+        const inlineBranch = branchPart ? resolveBranch(branchPart, branches) : null;
+        if (inlineBranch && inlineBranch.is_open !== 0) {
+          session.draft.branchId = inlineBranch.id;
+        }
       }
       if (missingQty) {
         session.draft.pendingMenuId = missingQty.menu.id;
@@ -345,11 +370,15 @@ export class BotHandler {
     return this.out(this.templates.render('tanya_jam', { jam_buka: settings.opening_hours }), 'rules', 'tanya_jam');
   }
 
-  lokasi(session, settings) {
-    if (!settings.address) return this.handoff(session, 'alamat_belum_diatur');
+  lokasi(session, settings, branches = []) {
+    const branchLines = Array.isArray(branches) && branches.length
+      ? branches.map((b) => `• ${b.name}${b.address ? `: ${b.address}` : ''}`).join('\n')
+      : '';
+    const alamat = settings.address || branchLines;
+    if (!alamat) return this.handoff(session, 'alamat_belum_diatur');
     session.failCount = 0;
     this.save(session);
-    return this.out(this.templates.render('tanya_lokasi', { alamat: settings.address }), 'rules', 'tanya_lokasi');
+    return this.out(this.templates.render('tanya_lokasi', { alamat }), 'rules', 'tanya_lokasi');
   }
 
   cancel(session) {
@@ -465,28 +494,39 @@ export class BotHandler {
     return this.advance(session, menus, branches);
   }
 
+  applyBranchSelection(session, branch, branches, menus) {
+    const draft = session.draft;
+    session.failCount = 0;
+    if (branch.is_open === 0) {
+      const openBranches = branches.filter(b => b.is_open === 1);
+      if (openBranches.length > 0) {
+        const daftarBuka = openBranches.map(b => `• ${b.name}`).join('\n');
+        return this.out(`Mohon maaf Kak, ${branch.name} saat ini sedang tutup. 🙏\n\nCabang kami yang buka saat ini:\n${daftarBuka}\n\nKakak mau pesan dari cabang yang mana?`, 'rules', 'pesan');
+      }
+      return this.out(`Mohon maaf Kak, saat ini semua cabang kami sedang tutup. 🙏\nSilakan hubungi kami kembali saat jam operasional ya Kak.`, 'rules', 'pesan');
+    }
+    draft.branchId = branch.id;
+    if (!draft.items.length) {
+      session.botState = 'PILIH_MENU';
+      this.save(session);
+      return this.out(this.templates.render('tanya_menu'), 'rules', 'pesan');
+    }
+    if (!draft.customerName) {
+      session.botState = 'ALAMAT_ATAU_AMBIL';
+      this.save(session);
+      return this.out(this.templates.render('tanya_nama'), 'rules', 'pesan');
+    }
+    return this.summary(session, menus, branches);
+  }
+
   collectBranchOrName(session, norm, raw, branches, menus) {
     const draft = session.draft;
     session.failCount = 0;
 
     if (!draft.branchId) {
-      const branch = resolveBranch(norm, branches);
+      const branch = resolveBranch(norm, branches) || resolveBranch(String(raw ?? '').toLowerCase(), branches);
       if (branch) {
-        if (branch.is_open === 0) {
-          const openBranches = branches.filter(b => b.is_open === 1);
-          if (openBranches.length > 0) {
-            const daftarBuka = openBranches.map(b => `• ${b.name}`).join('\n');
-            return this.out(`Mohon maaf Kak, ${branch.name} saat ini sedang tutup. 🙏\n\nCabang kami yang buka saat ini:\n${daftarBuka}\n\nKakak mau pesan dari cabang yang mana?`, 'rules', 'pesan');
-          }
-          return this.out(`Mohon maaf Kak, saat ini semua cabang kami sedang tutup. 🙏\nSilakan hubungi kami kembali saat jam operasional ya Kak.`, 'rules', 'pesan');
-        }
-        draft.branchId = branch.id;
-        if (!draft.customerName) {
-          session.botState = 'ALAMAT_ATAU_AMBIL';
-          this.save(session);
-          return this.out(this.templates.render('tanya_nama'), 'rules', 'pesan');
-        }
-        return this.summary(session, menus, branches);
+        return this.applyBranchSelection(session, branch, branches, menus);
       }
       session.botState = 'ALAMAT_ATAU_AMBIL';
       this.save(session);
@@ -514,6 +554,7 @@ export class BotHandler {
     if (!/^[\p{L}.'\-\s]+$/u.test(value)) return null;
     if (NAME_BLOCKLIST.has(norm)) return null;
     if (branches.some((branch) => normalize(branch.name) === norm || normalize(branch.id) === norm)) return null;
+    if (resolveBranch(norm, branches)) return null;
     return value;
   }
 

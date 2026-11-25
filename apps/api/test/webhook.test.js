@@ -41,12 +41,12 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ── Ekstraksi & filter ────────────────────────────────────────────────────────
 
-test('extract: pesan teks valid diekstrak', () => {
-  const result = extractIncomingMessage(messageEvent(), 'sambal-joelid');
+test('extract: pesan teks valid diekstrak dan dijadikan lowercase', () => {
+  const result = extractIncomingMessage(messageEvent({ body: 'HALO Cabang PUSAT' }), 'sambal-joelid');
   assert.equal(result.kind, 'text');
   assert.equal(result.phone, '628111111111');
   assert.equal(result.chatId, '628111111111@c.us');
-  assert.equal(result.raw, 'halo');
+  assert.equal(result.raw, 'halo cabang pusat');
 });
 
 test('extract: abaikan fromMe, grup, newsletter, event lain, session lain, body kosong', () => {

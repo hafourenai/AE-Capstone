@@ -151,7 +151,7 @@ function Customer({ mode, setMode }) {
     <div className="customer-page">
       <header className="customer-header">
         <button className="customer-logo" onClick={() => { setSent(null); navigate('home'); }} aria-label="Ke beranda Sambal Joelid">
-          <span>🌶</span><b>SAMBAL<br />JOELID</b>
+          <span><img src="/logo_main.png" alt="Logo Sambal Joelid" /></span><b>SAMBAL<br />JOELID</b>
         </button>
         <span className="customer-header-note">PEDESNYA KELEWATAN, BIKIN NAGIH!</span>
         <span className="customer-header-tag">LAYANAN PELANGGAN</span>
@@ -179,7 +179,7 @@ function Customer({ mode, setMode }) {
               </div>
             </div>
             <div className="customer-hero-art">
-              <img src="/brand-top-right.jpg" alt="Ilustrasi maskot cabai Sambal Joelid" />
+              <img src="/logo_main.png" alt="Logo Sambal Joelid" />
             </div>
           </section>
           <section className="customer-intro">
@@ -209,7 +209,7 @@ function Customer({ mode, setMode }) {
               <h1>{mode === 'order' ? 'Racik pesanan Anda.' : 'Kami siap mendengar.'}</h1>
               <p>{mode === 'order' ? 'Pilih menu dan cabang, lalu kami siapkan untuk Anda.' : 'Cerita Anda membantu kami memberikan pengalaman yang lebih baik.'}</p>
             </div>
-            <img src="/brand-top-right.jpg" alt="Maskot Sambal Joelid" />
+            <img src="/logo_main.png" alt="Logo Sambal Joelid" />
           </div>
           <div className="customer-form-card">
             {catalogError && <p className="error" role="alert">{catalogError} <button type="button" onClick={loadCatalog}>Coba lagi</button></p>}
@@ -590,7 +590,7 @@ function CatalogSettings({ token, onError }) {
 
   // Modal for Add/Edit Branch
   const [branchModal, setBranchModal] = useState(null);
-  const [branchForm, setBranchForm] = useState({ name: '', address: '', is_open: true });
+  const [branchForm, setBranchForm] = useState({ id: '', name: '', address: '', is_open: true });
 
   // Drafts for Bot Templates
   const [templateDrafts, setTemplateDrafts] = useState({});
@@ -731,12 +731,13 @@ function CatalogSettings({ token, onError }) {
 
   // Branch operations
   const openAddBranch = () => {
-    setBranchForm({ name: '', address: '', is_open: true });
+    setBranchForm({ id: '', name: '', address: '', is_open: true });
     setBranchModal({ mode: 'create' });
   };
 
   const openEditBranch = (branch) => {
     setBranchForm({
+      id: branch.id || '',
       name: branch.name || '',
       address: branch.address || '',
       is_open: branch.is_open === 1 || branch.is_open === true,
@@ -749,7 +750,9 @@ function CatalogSettings({ token, onError }) {
     if (!branchForm.name.trim()) return;
     try {
       setSaving(true);
+      const cleanedId = (branchForm.id || '').trim().toLowerCase();
       const payload = {
+        ...(cleanedId ? { id: cleanedId } : {}),
         name: branchForm.name.trim(),
         address: (branchForm.address || '').trim(),
         is_open: Boolean(branchForm.is_open),
@@ -769,7 +772,7 @@ function CatalogSettings({ token, onError }) {
         });
         flash(`Cabang "${branchForm.name}" berhasil ditambahkan.`);
       }
-      setBranchForm({ name: '', address: '', is_open: true });
+      setBranchForm({ id: '', name: '', address: '', is_open: true });
       setBranchModal(null);
       await load();
     } catch (error) {
@@ -1243,6 +1246,18 @@ function CatalogSettings({ token, onError }) {
                     />
                   </label>
                   <label style={{ marginTop: 12 }}>
+                    ID / Kata Kunci Cabang {branchModal.mode === 'edit' ? '*' : '(Opsional)'}
+                    <input
+                      required={branchModal.mode === 'edit'}
+                      value={branchForm.id}
+                      onChange={e => setBranchForm({ ...branchForm, id: e.target.value.toLowerCase() })}
+                      placeholder="Contoh: selatan, pusat, suhat"
+                    />
+                    <small className="field-hint">
+                      Kode singkat huruf kecil (lowercase). Dipakai sebagai identitas cabang &amp; kata kunci saat pelanggan memilih cabang lewat chat WhatsApp.
+                    </small>
+                  </label>
+                  <label style={{ marginTop: 12 }}>
                     Alamat Lengkap Cabang
                     <textarea
                       rows="3"
@@ -1643,7 +1658,7 @@ function AdminSession({ token, onLogout }) {
       {/* Sidebar */}
       <aside className="admin-sidebar">
         <div className="admin-brand">
-          <img src="/brand-top-right.jpg" alt="" />
+          <img src="/logo_main.png" alt="Logo Sambal Joelid" />
           <div><b>Sambal Joelid</b><small>Pusat Operasional</small></div>
         </div>
         <nav>
@@ -1684,7 +1699,7 @@ function AdminSession({ token, onLogout }) {
             <p>Pantau pesanan, keluhan, dan percakapan pelanggan secara real-time.</p>
           </div>
           <div className="admin-visual">
-            <img src="/brand-top-right.jpg" alt="Maskot Sambal Joelid" />
+            <img src="/logo_main.png" alt="Logo Sambal Joelid" />
             <div className="admin-profile"><span>AD</span><b>Admin</b></div>
           </div>
         </header>
@@ -2005,7 +2020,7 @@ function Admin() {
 
   return (
     <section className="login">
-      <img className="login-brand-art" src="/brand-top-right.jpg" alt="Maskot Sambal Joelid" />
+      <img className="login-brand-art" src="/logo_main.png" alt="Logo Sambal Joelid" />
       <p className="eyebrow">RUANG OPERASIONAL</p>
       <h2>Masuk sebagai Admin</h2>
       {error && <p className="error" role="alert">{error}</p>}

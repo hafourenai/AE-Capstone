@@ -380,3 +380,26 @@ test('bot: opsi 1 - chat awal acak tanpa menu langsung dibalas sapaan + jam buka
   assert.equal(state.get(conversationId).botState, 'MENU_UTAMA');
   assert.equal(state.get(conversationId).failCount, 0);
 });
+
+test('bot: memahami berbagai variasi pilihan cabang (ID custom, tanda hubung, kalimat natural, huruf besar, nomor urut, dan ganti cabang)', async (t) => {
+  const { db, bot, state, conversationId } = setup(t);
+  db.prepare("INSERT INTO branches(id, name, address) VALUES ('suhat', 'Cabang Soekarno Hatta', 'Jl. Soekarno Hatta No. 10')").run();
+  db.prepare("INSERT INTO branches(id, name, address) VALUES ('cabang-selatan', 'Cabang Jakarta Selatan', 'Jl. Fatmawati No. 5')").run();
+
+  await bot.handle({ conversationId, phone: '628111', raw: 'gdg 2' });
+
+  // Kata "cabang" saja tidak boleh salah memilih cabang pertama
+  const ambiguous = await bot.handle({ conversationId, phone: '628111', raw: 'CABANG' });
+  assert.match(ambiguous.reply, /cabang mana/i);
+  assert.equal(state.get(conversationId).draft.branchId, '');
+
+  // Pilih dengan kalimat natural + huruf kapital + nama tengah cabang ("DI CABANG SOEKARNO AJA KAK")
+  const picked = await bot.handle({ conversationId, phone: '628111', raw: 'DI CABANG SOEKARNO AJA KAK' });
+  assert.match(picked.reply, /nama Bapak\/Ibu/i);
+  assert.equal(state.get(conversationId).draft.branchId, 'suhat');
+
+  // Ganti cabang ke ID yang punya tanda hubung ("ganti cabang jakarta selatan")
+  const switched = await bot.handle({ conversationId, phone: '628111', raw: 'GANTI CABANG JAKARTA SELATAN' });
+  assert.match(switched.reply, /nama Bapak\/Ibu/i);
+  assert.equal(state.get(conversationId).draft.branchId, 'cabang-selatan');
+});

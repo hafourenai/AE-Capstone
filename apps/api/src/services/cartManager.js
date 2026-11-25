@@ -89,25 +89,154 @@ export function resolveMenu(hint, menus) {
   return scored.length > 0 ? scored[0].menu : null;
 }
 
+const BRANCH_STOPWORDS = new Set([
+  'cabang', 'cbng', 'cbg', 'branch', 'outlet', 'resto', 'restoran', 'warung',
+  'sambal', 'joelid', 'di', 'ke', 'dari', 'yang', 'yg', 'pilih', 'ambil',
+  'pesan', 'pesen', 'order', 'mau', 'pengen', 'ingin', 'buat', 'untuk',
+  'kak', 'kakak', 'min', 'admin', 'pak', 'bu', 'bapak', 'ibu', 'mas', 'mba',
+  'ya', 'iya', 'ok', 'oke', 'sip', 'dong', 'aja', 'saja', 'deh', 'nih', 'itu', 'ini',
+  'saya', 'aku', 'kami', 'kita', 'daerah', 'lokasi', 'area', 'dekat', 'deket',
+  'nomor', 'no', 'nomer', 'urut',
+]);
+
+const ADDRESS_STOPWORDS = new Set([
+  'jl', 'jln', 'jalan', 'no', 'nomor', 'rt', 'rw', 'kec', 'kecamatan',
+  'kel', 'kelurahan', 'kota', 'kab', 'kabupaten', 'provinsi', 'blok', 'gedung', 'ruko',
+]);
+
+function cleanBranchText(str) {
+  return String(str || '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[-_/.,()+]+/g, ' ')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getBranchTokens(str, extraStopwords = null) {
+  return cleanBranchText(str)
+    .split(' ')
+    .filter(t => t && !BRANCH_STOPWORDS.has(t) && (!extraStopwords || !extraStopwords.has(t)));
+}
+
 /**
  * Resolve branchHint ke branch yang valid.
- * Mencari di id, name, atau substring name.
+ * Mendukung pencocokan via ID cabang, Nama cabang, Alamat cabang, nomor urut,
+ * serta kalimat natural pelanggan (dalam huruf kecil / lowercase).
  */
 export function resolveBranch(hint, branches) {
-  const h = normalize(hint);
-  if (!h) return null;
-  // Exact id
-  let found = branches.find(b => normalize(b.id) === h);
+  if (!Array.isArray(branches) || branches.length === 0) return null;
+  const rawClean = cleanBranchText(hint);
+  if (!rawClean) return null;
+
+  // 1. Exact match pada ID atau Name utuh (setelah normalisasi karakter & spasi)
+  let found = branches.find(b => cleanBranchText(b.id) === rawClean || cleanBranchText(b.name) === rawClean);
   if (found) return found;
-  // Exact name
-  found = branches.find(b => normalize(b.name) === h);
-  if (found) return found;
-  // Partial: hint di dalam name
-  found = branches.find(b => normalize(b.name).includes(h));
-  if (found) return found;
-  // Partial: name di dalam hint
-  found = branches.find(b => h.includes(normalize(b.id)) || h.includes(normalize(b.name).split(' ').pop()));
-  if (found) return found;
+
+  // 2. Pilihan menggunakan nomor urut (misal "1", "2", "cabang 1", "nomor 2", "pilih 1")
+  const indexMatch = rawClean.match(/^(?:(?:cabang|nomor|no|nomer|pilih|yang|yg)\s+)*(\d{1,2})$/);
+  if (indexMatch) {
+    const idx = Number(indexMatch[1]);
+    // Pastikan bukan bagian dari nama/id cabang yang memang mengandung angka tersebut
+    const literalNumBranch = branches.find(b =>
+      cleanBranchText(b.id).split(' ').includes(String(idx)) ||
+      cleanBranchText(b.name).split(' ').includes(String(idx))
+    );
+    if (literalNumBranch) return literalNumBranch;
+    if (idx >= 1 && idx <= branches.length) {
+      return branches[idx - 1];
+    }
+  }
+
+  // 3. Bersihkan kata-kata umum/filler ("di cabang pusat kak" -> ["pusat"])
+  const hTokens = getBranchTokens(rawClean);
+  if (hTokens.length === 0) return null;
+  const hCore = hTokens.join(' ');
+
+  // 4. Hitung skor kecocokan untuk setiap cabang
+  const scored = branches.map(branch => {
+    const idClean = cleanBranchText(branch.id);
+    const nameClean = cleanBranchText(branch.name);
+    const idTokens = getBranchTokens(branch.id);
+    const nameTokens = getBranchTokens(branch.name);
+    const idCore = idTokens.join(' ') || idClean;
+    const nameCore = nameTokens.join(' ') || nameClean;
+    const addrTokens = getBranchTokens(branch.address || '', ADDRESS_STOPWORDS).filter(t => t.length >= 3);
+
+    let score = 0;
+
+    // Exact match setelah stopwords dibuang ("cabang pusat" -> "pusat" === idCore/nameCore)
+    if (hCore === idClean || hCore === idCore || hCore === nameClean || hCore === nameCore) {
+      score = Math.max(score, 1000);
+    }
+
+    // Phrase inclusion: seluruh core cabang ada di dalam pesan pelanggan atau sebaliknya
+    if (idCore && idCore.length >= 2) {
+      const idWords = idCore.split(' ');
+      if (idWords.every(w => hTokens.includes(w))) {
+        score = Math.max(score, 850 + idWords.length * 20);
+      } else if (hCore.length >= 3 && (idCore.includes(hCore) || hCore.includes(idCore))) {
+        score = Math.max(score, 700);
+      }
+    }
+
+    if (nameCore && nameCore.length >= 2) {
+      const nameWords = nameCore.split(' ');
+      if (nameWords.every(w => hTokens.includes(w))) {
+        score = Math.max(score, 820 + nameWords.length * 20);
+      } else if (hCore.length >= 3 && (nameCore.includes(hCore) || hCore.includes(nameCore))) {
+        score = Math.max(score, 680);
+      }
+    }
+
+    // Token-level matching pada ID & Nama cabang
+    const branchKeyTokens = [...new Set([...idTokens, ...nameTokens])];
+    let matchedKeyTokens = 0;
+    let fuzzyBonus = 0;
+
+    for (const ht of hTokens) {
+      let bestForToken = 0;
+      for (const bt of branchKeyTokens) {
+        if (ht === bt) {
+          bestForToken = Math.max(bestForToken, 200);
+        } else if (ht.length >= 3 && bt.length >= 3 && (bt.includes(ht) || ht.includes(bt))) {
+          bestForToken = Math.max(bestForToken, 140);
+        } else if (ht.length >= 4 && bt.length >= 4) {
+          const dist = levenshtein(ht, bt);
+          if (dist === 1) bestForToken = Math.max(bestForToken, 120);
+          else if (dist === 2 && bt.length >= 5) bestForToken = Math.max(bestForToken, 85);
+        }
+      }
+      if (bestForToken >= 140) matchedKeyTokens += 1;
+      fuzzyBonus += bestForToken;
+    }
+
+    if (fuzzyBonus > 0) {
+      const coverage = branchKeyTokens.length > 0 ? (matchedKeyTokens / branchKeyTokens.length) * 60 : 0;
+      score = Math.max(score, fuzzyBonus + coverage);
+    }
+
+    // Pencocokan dengan kata kunci alamat cabang (jika pelanggan menyebut nama jalan/daerah di alamat)
+    if (score === 0 && addrTokens.length > 0) {
+      let addrScore = 0;
+      for (const ht of hTokens) {
+        if (ht.length < 3) continue;
+        for (const at of addrTokens) {
+          if (ht === at) addrScore += 110;
+          else if (ht.length >= 4 && at.length >= 4 && (at.includes(ht) || ht.includes(at))) addrScore += 75;
+        }
+      }
+      if (addrScore > 0) score = Math.max(score, addrScore);
+    }
+
+    return { branch, score };
+  }).filter(item => item.score > 0).sort((a, b) => b.score - a.score);
+
+  if (scored.length === 0) return null;
+  if (scored.length === 1) return scored[0].branch;
+  // Jika kandidat teratas unggul dari kandidat kedua, pilih kandidat teratas
+  if (scored[0].score > scored[1].score) return scored[0].branch;
   return null;
 }
 

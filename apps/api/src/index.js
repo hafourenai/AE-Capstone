@@ -302,11 +302,22 @@ const branchCreateInput = z.object({
 });
 
 const branchUpdateInput = z.object({
+  id: z.string().trim().min(1).max(50).optional(),
   name: z.string().trim().min(2).max(100).optional(),
   address: z.string().trim().max(300).optional(),
   is_open: z.boolean().optional(),
   active: z.boolean().optional(),
 });
+
+function sanitizeBranchId(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
 
 api.get('/admin/branches', auth, (_, res) => {
   res.json(rows('SELECT id, name, address, is_open, active FROM branches WHERE active = 1 ORDER BY name'));
@@ -314,14 +325,21 @@ api.get('/admin/branches', auth, (_, res) => {
 
 api.post('/admin/branches', auth, validate(branchCreateInput), (req, res) => {
   try {
-    let finalId = req.body.id ? normalize(req.body.id).replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') : '';
-    if (!finalId) {
-      finalId = normalize(req.body.name).replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || ('cabang-' + Date.now());
+    const customIdProvided = Boolean(req.body.id && req.body.id.trim());
+    let finalId = customIdProvided ? sanitizeBranchId(req.body.id) : '';
+    if (customIdProvided && !finalId) {
+      return res.status(400).json({ error: 'INVALID_BRANCH_ID', message: 'ID cabang hanya boleh berisi huruf kecil, angka, atau tanda hubung (-).' });
     }
-    let counter = 1;
-    const baseId = finalId;
-    while (db.prepare('SELECT 1 FROM branches WHERE id = ?').get(finalId)) {
-      finalId = `${baseId}-${counter++}`;
+    if (customIdProvided && db.prepare('SELECT 1 FROM branches WHERE id = ?').get(finalId)) {
+      return res.status(400).json({ error: 'BRANCH_ID_EXISTS', message: `ID cabang "${finalId}" sudah digunakan. Silakan pilih ID lain.` });
+    }
+    if (!finalId) {
+      finalId = sanitizeBranchId(req.body.name) || ('cabang-' + Date.now());
+      let counter = 1;
+      const baseId = finalId;
+      while (db.prepare('SELECT 1 FROM branches WHERE id = ?').get(finalId)) {
+        finalId = `${baseId}-${counter++}`;
+      }
     }
     db.prepare('INSERT INTO branches(id, name, address, active, is_open) VALUES (?, ?, ?, 1, ?)')
       .run(finalId, req.body.name, req.body.address || '', req.body.is_open ? 1 : 0);
@@ -335,16 +353,56 @@ api.post('/admin/branches', auth, validate(branchCreateInput), (req, res) => {
 api.patch('/admin/branches/:id', auth, validate(branchUpdateInput), (req, res) => {
   const current = db.prepare('SELECT * FROM branches WHERE id = ?').get(req.params.id);
   if (!current) return res.status(404).json({ error: 'BRANCH_NOT_FOUND', message: 'Cabang tidak ditemukan' });
+
+  const nextId = req.body.id !== undefined ? sanitizeBranchId(req.body.id) : current.id;
+  if (!nextId) {
+    return res.status(400).json({ error: 'INVALID_BRANCH_ID', message: 'ID cabang tidak valid.' });
+  }
+  if (nextId !== current.id && db.prepare('SELECT 1 FROM branches WHERE id = ?').get(nextId)) {
+    return res.status(400).json({ error: 'BRANCH_ID_EXISTS', message: `ID cabang "${nextId}" sudah digunakan oleh cabang lain.` });
+  }
+
   const next = {
+    id: nextId,
     name: req.body.name ?? current.name,
     address: req.body.address ?? (current.address || ''),
     is_open: req.body.is_open === undefined ? current.is_open : (req.body.is_open ? 1 : 0),
     active: req.body.active === undefined ? current.active : (req.body.active ? 1 : 0),
   };
-  db.prepare('UPDATE branches SET name = ?, address = ?, is_open = ?, active = ? WHERE id = ?')
-    .run(next.name, next.address, next.is_open, next.active, req.params.id);
-  const updated = db.prepare('SELECT id, name, address, is_open, active FROM branches WHERE id = ?').get(req.params.id);
-  res.json(updated);
+
+  try {
+    db.transaction(() => {
+      if (next.id !== current.id) {
+        db.prepare('INSERT INTO branches(id, name, address, active, is_open) VALUES (?, ?, ?, ?, ?)')
+          .run(next.id, next.name, next.address, next.active, next.is_open);
+        db.prepare('UPDATE customer_orders SET branch_id = ? WHERE branch_id = ?').run(next.id, current.id);
+        db.prepare('UPDATE customer_complaints SET branch_id = ? WHERE branch_id = ?').run(next.id, current.id);
+        db.prepare('UPDATE whatsapp_cart SET branch_id = ? WHERE branch_id = ?').run(next.id, current.id);
+        const drafts = db.prepare('SELECT id, draft_order_json FROM whatsapp_conversations WHERE draft_order_json IS NOT NULL').all();
+        const updateDraft = db.prepare('UPDATE whatsapp_conversations SET draft_order_json = ? WHERE id = ?');
+        for (const row of drafts) {
+          try {
+            const parsed = JSON.parse(row.draft_order_json);
+            if (parsed && parsed.branchId === current.id) {
+              parsed.branchId = next.id;
+              updateDraft.run(JSON.stringify(parsed), row.id);
+            }
+          } catch {
+            // abaikan draft JSON yang tidak valid
+          }
+        }
+        db.prepare('DELETE FROM branches WHERE id = ?').run(current.id);
+      } else {
+        db.prepare('UPDATE branches SET name = ?, address = ?, is_open = ?, active = ? WHERE id = ?')
+          .run(next.name, next.address, next.is_open, next.active, current.id);
+      }
+    })();
+
+    const updated = db.prepare('SELECT id, name, address, is_open, active FROM branches WHERE id = ?').get(next.id);
+    res.json(updated);
+  } catch (error) {
+    res.status(400).json({ error: 'UPDATE_BRANCH_FAILED', message: error.message });
+  }
 });
 
 api.delete('/admin/branches/:id', auth, (req, res) => {
@@ -493,7 +551,8 @@ function updateStatus(table, _transitions, event, req, res) { const item = db.pr
 const messagePipeline = new IncomingPipeline({
   db,
   delayMs: env.whatsappDebounceMs,
-  processBatch: async ({ phone, chatId, raw, messageIds }) => {
+  processBatch: async ({ phone, chatId, raw: incomingRaw, messageIds }) => {
+    const raw = String(incomingRaw ?? '').toLowerCase();
     const { id: conversationId, previousLastMessageAt } = upsertConversation(phone, chatId);
     saveInbound(conversationId, messageIds[0], raw);
     const startedAt = Date.now();

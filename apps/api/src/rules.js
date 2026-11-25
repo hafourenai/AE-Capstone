@@ -49,6 +49,8 @@ export const LOKASI = [
   'lokasi', 'alamat', 'dimana', 'di mana', 'lokasinya dimana', 'alamatnya dimana',
   'lokasi nya dimana', 'dimana lokasinya', 'dimana alamatnya', 'lokasi resto',
   'alamat resto', 'restonya dimana', 'resto nya dimana',
+  'daftar cabang', 'list cabang', 'cabang mana aja', 'cabang apa aja',
+  'ada cabang mana', 'ada cabang apa', 'pilihan cabang', 'info cabang',
 ];
 
 export const ADMIN = [

@@ -42,7 +42,7 @@ export function extractIncomingMessage(event, sessionName) {
   const chatId = normalizeChatId(payload.from);
   if (!chatId || isIgnoredChat(chatId)) return null;
 
-  const raw = String(payload.body ?? '').trim();
+  const raw = String(payload.body ?? '').toLowerCase().trim();
   const type = String(payload.type ?? '').toLowerCase();
   const isTextType = !type || type === 'chat' || type === 'text';
   // Gambar, dokumen, audio, stiker, lokasi, kontak, dll. tidak diproses sebagai teks.
@@ -100,7 +100,7 @@ export class MessageAggregator {
     const batch = {
       phone: items[0].phone,
       chatId: items[0].chatId,
-      raw: items.map((item) => item.raw).filter(Boolean).join(' ').trim(),
+      raw: items.map((item) => String(item.raw ?? '').toLowerCase()).filter(Boolean).join(' ').trim(),
       messageIds: items.map((item) => item.messageId),
       kind: items.some((item) => item.kind === 'media') ? 'media' : 'text',
       timestamp: items.at(-1).timestamp,
