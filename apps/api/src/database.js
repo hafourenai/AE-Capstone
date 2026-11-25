@@ -9,7 +9,7 @@ export function openDatabase(filename) {
   db.pragma('foreign_keys = ON');
   db.pragma('journal_mode = WAL');
   db.exec(`
-    CREATE TABLE IF NOT EXISTS branches (id TEXT PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, is_open INTEGER NOT NULL DEFAULT 1);
+    CREATE TABLE IF NOT EXISTS branches (id TEXT PRIMARY KEY, name TEXT NOT NULL, address TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, is_open INTEGER NOT NULL DEFAULT 1);
     CREATE TABLE IF NOT EXISTS menus (id TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'Lainnya', price INTEGER NOT NULL CHECK(price >= 0), active INTEGER NOT NULL DEFAULT 1);
     CREATE TABLE IF NOT EXISTS customer_orders (
       id INTEGER PRIMARY KEY, reference_number TEXT NOT NULL UNIQUE, customer_name TEXT NOT NULL, customer_phone TEXT NOT NULL,
@@ -133,6 +133,9 @@ export function openDatabase(filename) {
   const branchColumns = db.prepare("PRAGMA table_info(branches)").all();
   if (!branchColumns.some(col => col.name === 'is_open')) {
     db.exec('ALTER TABLE branches ADD COLUMN is_open INTEGER NOT NULL DEFAULT 1');
+  }
+  if (!branchColumns.some(col => col.name === 'address')) {
+    db.exec("ALTER TABLE branches ADD COLUMN address TEXT NOT NULL DEFAULT ''");
   }
 
   const menuColumns = db.prepare("PRAGMA table_info(menus)").all();

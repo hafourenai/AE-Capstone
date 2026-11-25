@@ -36,7 +36,7 @@ export class BotHandler {
     if (!norm) return null;
 
     const menus = await this.catalog.getMenus();
-    const branches = this.db.prepare('SELECT id, name, is_open FROM branches WHERE active = 1').all();
+    const branches = this.db.prepare('SELECT id, name, address, is_open FROM branches WHERE active = 1').all();
     const settings = this.settings();
 
     // ── Deteksi jeda sesi (>= SESSION_RESET_MINUTES sejak pesan terakhir) ──
@@ -490,7 +490,7 @@ export class BotHandler {
       }
       session.botState = 'ALAMAT_ATAU_AMBIL';
       this.save(session);
-      const daftar = branches.map((branchItem) => `• ${branchItem.name}${branchItem.is_open === 0 ? ' (Tutup)' : ''}`).join('\n');
+      const daftar = branches.map((branchItem) => `• ${branchItem.name}${branchItem.address ? ` (${branchItem.address})` : ''}${branchItem.is_open === 0 ? ' (Tutup)' : ''}`).join('\n');
       return this.out(this.templates.render('tanya_cabang', { daftar }), 'rules', 'pesan');
     }
 
@@ -529,7 +529,7 @@ export class BotHandler {
     if (!draft.branchId) {
       session.botState = 'ALAMAT_ATAU_AMBIL';
       this.save(session);
-      const daftar = branches.map((branch) => `• ${branch.name}${branch.is_open === 0 ? ' (Tutup)' : ''}`).join('\n');
+      const daftar = branches.map((branch) => `• ${branch.name}${branch.address ? ` (${branch.address})` : ''}${branch.is_open === 0 ? ' (Tutup)' : ''}`).join('\n');
       return this.out(this.templates.render('tanya_cabang', { daftar }), 'rules', 'pesan');
     }
     if (!draft.customerName) {

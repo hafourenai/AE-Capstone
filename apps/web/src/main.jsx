@@ -39,6 +39,9 @@ function Customer({ mode, setMode }) {
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState('');
   const [quantities, setQuantities] = useState({});
+  const [menuQuery, setMenuQuery] = useState('');
+  const [activeCategory, setActiveCategory] = useState('');
+  const [selectedBranchId, setSelectedBranchId] = useState('');
 
   const loadCatalog = useCallback(() => {
     setCatalogLoading(true);
@@ -95,15 +98,54 @@ function Customer({ mode, setMode }) {
   const setQuantity = (menuId, value) => setQuantities(current => ({ ...current, [menuId]: Math.max(0, Math.min(99, Number(value) || 0)) }));
   const orderCount = Object.values(quantities).reduce((sum, qty) => sum + qty, 0);
   const orderTotal = menus.reduce((sum, menu) => sum + menu.price * (quantities[menu.id] || 0), 0);
+  const selectedMenus = useMemo(() => menus.filter(m => (quantities[m.id] || 0) > 0), [menus, quantities]);
+  const selectedBranch = useMemo(() => branches.find(b => b.id === selectedBranchId), [branches, selectedBranchId]);
+
+  const categoryList = useMemo(() => {
+    const preferredOrder = [
+      'Paket Ayam',
+      'Paket Seafood & Ikan',
+      'Paket Lainnya',
+      'Lauk Ayam (Satuan)',
+      'Lauk Seafood & Ikan (Satuan)',
+      'Lauk & Sayur Satuan',
+      'Minuman',
+      'Kemasan & Tambahan',
+      'Lainnya',
+    ];
+    const cats = Array.from(new Set(menus.map(m => m.category || 'Lainnya')));
+    return cats.sort((a, b) => {
+      const idxA = preferredOrder.indexOf(a);
+      const idxB = preferredOrder.indexOf(b);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return a.localeCompare(b);
+    });
+  }, [menus]);
+
   const groupedMenus = useMemo(() => {
     const groups = {};
-    menus.forEach(m => {
+    const q = menuQuery.trim().toLowerCase();
+    const filtered = menus.filter(m => {
       const cat = m.category || 'Lainnya';
-      if (!groups[cat]) groups[cat] = [];
-      groups[cat].push(m);
+      if (activeCategory === '__SELECTED__' && !(quantities[m.id] > 0)) return false;
+      if (activeCategory && activeCategory !== '__SELECTED__' && cat !== activeCategory) return false;
+      if (q) {
+        const matchName = m.name?.toLowerCase().includes(q);
+        const matchDesc = m.description?.toLowerCase().includes(q);
+        const matchCat = cat.toLowerCase().includes(q);
+        if (!matchName && !matchDesc && !matchCat) return false;
+      }
+      return true;
+    });
+
+    categoryList.forEach(cat => {
+      const items = filtered.filter(m => (m.category || 'Lainnya') === cat);
+      if (items.length) groups[cat] = items;
     });
     return groups;
-  }, [menus]);
+  }, [menus, menuQuery, activeCategory, quantities, categoryList]);
 
   return (
     <div className="customer-page">
@@ -187,43 +229,129 @@ function Customer({ mode, setMode }) {
 
               <div className="form-field">
                 <label htmlFor="f-branch">Cabang</label>
-                <select id="f-branch" name="branch" required={mode === 'order'}>
+                <select
+                  id="f-branch"
+                  name="branch"
+                  required={mode === 'order'}
+                  value={selectedBranchId}
+                  onChange={e => setSelectedBranchId(e.target.value)}
+                >
                   <option value="">Pilih cabang</option>
                   {branches.map(b => (
                     <option key={b.id} value={b.id} disabled={b.is_open === 0}>
-                      {b.name}{b.is_open === 0 ? ' (Tutup)' : ''}
+                      {b.name}{b.address ? ` — ${b.address}` : ''}{b.is_open === 0 ? ' (Tutup)' : ''}
                     </option>
                   ))}
                 </select>
+                {selectedBranch?.address && (
+                  <small className="input-help branch-address-hint">
+                    <MapPin size={12} /> Alamat cabang: {selectedBranch.address}
+                  </small>
+                )}
               </div>
 
               {mode === 'order' ? (
                 <>
                   <div className="customer-form-section">
-                    <h2>Pilih menu favorit</h2>
-                    <p>Isi jumlah untuk menu yang ingin dipesan.</p>
+                    <div className="customer-menu-header">
+                      <div>
+                        <h2>Pilih menu favorit</h2>
+                        <p>Klik <b>+ Tambah</b> pada menu yang ingin dipesan, lalu sesuaikan jumlahnya.</p>
+                      </div>
+                      <div className="customer-menu-search">
+                        <Search size={14} />
+                        <input
+                          type="text"
+                          placeholder="Cari menu favorit..."
+                          value={menuQuery}
+                          onChange={e => setMenuQuery(e.target.value)}
+                        />
+                        {menuQuery && (
+                          <button type="button" onClick={() => setMenuQuery('')} aria-label="Reset pencarian">×</button>
+                        )}
+                      </div>
+                    </div>
+
+                    {categoryList.length > 1 && (
+                      <div className="customer-category-pills" role="tablist" aria-label="Filter kategori menu">
+                        <button
+                          type="button"
+                          className={`cat-pill ${activeCategory === '' ? 'active' : ''}`}
+                          onClick={() => setActiveCategory('')}
+                        >
+                          Semua ({menus.length})
+                        </button>
+                        {orderCount > 0 && (
+                          <button
+                            type="button"
+                            className={`cat-pill selected-pill ${activeCategory === '__SELECTED__' ? 'active' : ''}`}
+                            onClick={() => setActiveCategory(activeCategory === '__SELECTED__' ? '' : '__SELECTED__')}
+                          >
+                            Dipilih ({selectedMenus.length})
+                          </button>
+                        )}
+                        {categoryList.map(cat => (
+                          <button
+                            key={cat}
+                            type="button"
+                            className={`cat-pill ${activeCategory === cat ? 'active' : ''}`}
+                            onClick={() => setActiveCategory(activeCategory === cat ? '' : cat)}
+                          >
+                            {cat}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
                     <div className="menu-groups">
                       {Object.entries(groupedMenus).map(([category, items]) => (
                         <div key={category} className="menu-group-block">
-                          <h3 className="menu-group-title">{category}</h3>
+                          <div className="menu-group-head">
+                            <h3 className="menu-group-title">{category}</h3>
+                            <span className="menu-group-count">{items.length} menu</span>
+                          </div>
                           <div className="menu-list">
-                            {items.map(m => (
-                              <div className={`menu ${quantities[m.id] ? 'selected' : ''}`} key={m.id}>
-                                <span>
-                                  <b>{m.name}</b>
-                                  {m.description && <small className="menu-desc">{m.description}</small>}
-                                  <small className="menu-price">{currency(m.price)}</small>
-                                </span>
-                                <div className="quantity-stepper" aria-label={`Jumlah ${m.name}`}>
-                                  <button type="button" onClick={() => setQuantity(m.id, (quantities[m.id] || 0) - 1)} aria-label={`Kurangi ${m.name}`}><Minus /></button>
-                                  <input name={`qty-${m.id}`} type="number" min="0" max="99" value={quantities[m.id] || 0} onChange={event => setQuantity(m.id, event.target.value)} />
-                                  <button type="button" onClick={() => setQuantity(m.id, (quantities[m.id] || 0) + 1)} aria-label={`Tambah ${m.name}`}><Plus /></button>
+                            {items.map(m => {
+                              const qty = quantities[m.id] || 0;
+                              return (
+                                <div className={`menu ${qty > 0 ? 'selected' : ''}`} key={m.id}>
+                                  <div className="menu-info">
+                                    <b>{m.name}</b>
+                                    {m.description && <small className="menu-desc">{m.description}</small>}
+                                    <small className="menu-price">{currency(m.price)}</small>
+                                  </div>
+                                  <div className="menu-action">
+                                    {qty > 0 ? (
+                                      <div className="quantity-stepper" aria-label={`Jumlah ${m.name}`}>
+                                        <button type="button" onClick={() => setQuantity(m.id, qty - 1)} aria-label={`Kurangi ${m.name}`}><Minus size={14} /></button>
+                                        <input name={`qty-${m.id}`} type="number" min="0" max="99" value={qty} onChange={event => setQuantity(m.id, event.target.value)} />
+                                        <button type="button" onClick={() => setQuantity(m.id, qty + 1)} aria-label={`Tambah ${m.name}`}><Plus size={14} /></button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className="menu-add-btn"
+                                        onClick={() => setQuantity(m.id, 1)}
+                                        aria-label={`Tambah ${m.name}`}
+                                      >
+                                        <Plus size={14} /> Tambah
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       ))}
+                      {menus.length > 0 && !Object.keys(groupedMenus).length && (
+                        <p className="menu-empty-filter">
+                          Tidak ada menu yang cocok dengan pencarian/filter.{' '}
+                          <button type="button" className="link-reset-btn" onClick={() => { setMenuQuery(''); setActiveCategory(''); }}>
+                            Tampilkan semua menu
+                          </button>
+                        </p>
+                      )}
                       {!menus.length && <p>{catalogLoading ? 'Memuat menu…' : catalogError ? 'Gagal memuat menu.' : 'Menu belum tersedia. Silakan coba lagi nanti.'}</p>}
                     </div>
                   </div>
@@ -251,7 +379,24 @@ function Customer({ mode, setMode }) {
                 </>
               )}
 
-              {mode === 'order' && <div className="order-summary"><span><b>{orderCount}</b> item dipilih</span><strong>{currency(orderTotal)}</strong></div>}
+              {mode === 'order' && (
+                <div className="order-summary-box">
+                  {selectedMenus.length > 0 && (
+                    <div className="selected-items-list">
+                      {selectedMenus.map(m => (
+                        <span key={m.id} className="selected-item-chip">
+                          <b>{m.name}</b> × {quantities[m.id]}
+                          <button type="button" onClick={() => setQuantity(m.id, 0)} aria-label={`Hapus ${m.name} dari pesanan`}>×</button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="order-summary">
+                    <span><b>{orderCount}</b> item dipilih</span>
+                    <strong>{currency(orderTotal)}</strong>
+                  </div>
+                </div>
+              )}
               <button className="customer-submit" type="submit">{mode === 'order' ? 'Kirim pesanan' : 'Kirim keluhan'} <span>→</span></button>
             </form>
           </div>
@@ -443,9 +588,12 @@ function CatalogSettings({ token, onError }) {
     aliasesText: '',
   });
 
-  // Modal for Add Branch
-  const [branchModal, setBranchModal] = useState(false);
-  const [branchForm, setBranchForm] = useState({ name: '', is_open: true });
+  // Modal for Add/Edit Branch
+  const [branchModal, setBranchModal] = useState(null);
+  const [branchForm, setBranchForm] = useState({ name: '', address: '', is_open: true });
+
+  // Drafts for Bot Templates
+  const [templateDrafts, setTemplateDrafts] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -463,6 +611,7 @@ function CatalogSettings({ token, onError }) {
       setCategories(catList || []);
       setSettings(prev => ({ ...prev, ...settingMap }));
       setTemplates(templateMap);
+      setTemplateDrafts(templateMap);
     } catch (error) {
       onError(error.message);
     } finally {
@@ -581,19 +730,47 @@ function CatalogSettings({ token, onError }) {
   };
 
   // Branch operations
+  const openAddBranch = () => {
+    setBranchForm({ name: '', address: '', is_open: true });
+    setBranchModal({ mode: 'create' });
+  };
+
+  const openEditBranch = (branch) => {
+    setBranchForm({
+      name: branch.name || '',
+      address: branch.address || '',
+      is_open: branch.is_open === 1 || branch.is_open === true,
+    });
+    setBranchModal({ mode: 'edit', id: branch.id });
+  };
+
   const handleSaveBranch = async (e) => {
     e.preventDefault();
     if (!branchForm.name.trim()) return;
     try {
       setSaving(true);
-      await request('/admin/branches', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name: branchForm.name.trim(), is_open: branchForm.is_open }),
-      });
-      flash(`Cabang "${branchForm.name}" berhasil ditambahkan.`);
-      setBranchForm({ name: '', is_open: true });
-      setBranchModal(false);
+      const payload = {
+        name: branchForm.name.trim(),
+        address: (branchForm.address || '').trim(),
+        is_open: Boolean(branchForm.is_open),
+      };
+      if (branchModal?.mode === 'edit') {
+        await request(`/admin/branches/${branchModal.id}`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload),
+        });
+        flash(`Cabang "${branchForm.name}" berhasil diperbarui.`);
+      } else {
+        await request('/admin/branches', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload),
+        });
+        flash(`Cabang "${branchForm.name}" berhasil ditambahkan.`);
+      }
+      setBranchForm({ name: '', address: '', is_open: true });
+      setBranchModal(null);
       await load();
     } catch (error) {
       onError(error.message);
@@ -657,7 +834,8 @@ function CatalogSettings({ token, onError }) {
     } catch (error) { onError(error.message); } finally { setSaving(false); }
   };
 
-  const saveTemplate = async (key, content) => {
+  const saveTemplate = async (key, contentToSave) => {
+    const content = contentToSave !== undefined ? contentToSave : (templateDrafts[key] ?? templates[key] ?? '');
     try {
       setSaving(true);
       await request(`/admin/templates/${key}`, {
@@ -665,8 +843,37 @@ function CatalogSettings({ token, onError }) {
         headers: { Authorization: `Bearer ${token}` },
         body: JSON.stringify({ content }),
       });
-      flash(`Template "${key}" disimpan.`);
+      setTemplates(prev => ({ ...prev, [key]: content }));
+      setTemplateDrafts(prev => ({ ...prev, [key]: content }));
+      flash(`Perubahan template "${key}" berhasil disimpan.`);
     } catch (error) { onError(error.message); } finally { setSaving(false); }
+  };
+
+  const dirtyTemplateKeys = useMemo(() => {
+    return Object.keys(templates).filter(key => (templateDrafts[key] ?? templates[key]) !== templates[key]);
+  }, [templates, templateDrafts]);
+
+  const saveAllTemplates = async () => {
+    const keysToSave = dirtyTemplateKeys.length ? dirtyTemplateKeys : Object.keys(templates);
+    if (!keysToSave.length) return;
+    try {
+      setSaving(true);
+      await Promise.all(
+        keysToSave.map(key =>
+          request(`/admin/templates/${key}`, {
+            method: 'PUT',
+            headers: { Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ content: templateDrafts[key] ?? templates[key] }),
+          })
+        )
+      );
+      setTemplates(prev => ({ ...prev, ...templateDrafts }));
+      flash(`Berhasil menyimpan perubahan pada ${keysToSave.length} template bot.`);
+    } catch (error) {
+      onError(error.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   // Filtered menus
@@ -953,7 +1160,7 @@ function CatalogSettings({ token, onError }) {
               <p className="eyebrow">PENGATURAN CABANG</p>
               <h2>Manajemen Cabang Restoran</h2>
             </div>
-            <button type="button" className="action-btn-primary" onClick={() => setBranchModal(true)}>
+            <button type="button" className="action-btn-primary" onClick={openAddBranch}>
               <PlusCircle size={15} /> Tambah Cabang
             </button>
           </div>
@@ -970,6 +1177,12 @@ function CatalogSettings({ token, onError }) {
                     {branch.is_open ? 'Buka' : 'Tutup'}
                   </span>
                 </div>
+
+                <div className={`branch-card-address ${branch.address ? '' : 'empty'}`}>
+                  <MapPin size={14} />
+                  <span>{branch.address || 'Alamat belum diatur — klik Edit untuk mengisi alamat cabang.'}</span>
+                </div>
+
                 <p className="branch-card-desc">
                   {branch.is_open
                     ? 'Cabang ini beroperasi normal dan menerima pesanan dari web maupun bot WhatsApp.'
@@ -984,6 +1197,15 @@ function CatalogSettings({ token, onError }) {
                   >
                     <Power size={14} />
                     {branch.is_open ? 'Tutup Cabang Sementara' : 'Buka Cabang Sekarang'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-icon"
+                    onClick={() => openEditBranch(branch)}
+                    title="Edit Cabang & Alamat"
+                    disabled={saving}
+                  >
+                    <Edit2 size={14} />
                   </button>
                   <button
                     type="button"
@@ -1002,13 +1224,13 @@ function CatalogSettings({ token, onError }) {
             )}
           </div>
 
-          {/* Modal Add Branch */}
+          {/* Modal Add / Edit Branch */}
           {branchModal && (
-            <div className="modal-overlay" onClick={() => setBranchModal(false)}>
+            <div className="modal-overlay" onClick={() => setBranchModal(null)}>
               <div className="modal-dialog small" onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
-                  <h3>Tambah Cabang Baru</h3>
-                  <button type="button" className="close-btn" onClick={() => setBranchModal(false)}>×</button>
+                  <h3>{branchModal.mode === 'edit' ? 'Edit Cabang Restoran' : 'Tambah Cabang Baru'}</h3>
+                  <button type="button" className="close-btn" onClick={() => setBranchModal(null)}>×</button>
                 </div>
                 <form onSubmit={handleSaveBranch} className="modal-form">
                   <label>
@@ -1020,17 +1242,28 @@ function CatalogSettings({ token, onError }) {
                       placeholder="Contoh: Cabang Selatan"
                     />
                   </label>
+                  <label style={{ marginTop: 12 }}>
+                    Alamat Lengkap Cabang
+                    <textarea
+                      rows="3"
+                      value={branchForm.address}
+                      onChange={e => setBranchForm({ ...branchForm, address: e.target.value })}
+                      placeholder="Contoh: Jl. Sudirman No. 45, Kec. Klojen, Kota Malang"
+                    />
+                  </label>
                   <label className="checkbox-label" style={{ marginTop: 12 }}>
                     <input
                       type="checkbox"
                       checked={branchForm.is_open}
                       onChange={e => setBranchForm({ ...branchForm, is_open: e.target.checked })}
                     />
-                    Status Awal: Langsung Buka
+                    {branchModal.mode === 'edit' ? 'Status Cabang: Sedang Buka' : 'Status Awal: Langsung Buka'}
                   </label>
                   <div className="modal-actions">
-                    <button type="button" className="btn-secondary" onClick={() => setBranchModal(false)}>Batal</button>
-                    <button type="submit" className="action-btn-primary" disabled={saving}>Simpan Cabang</button>
+                    <button type="button" className="btn-secondary" onClick={() => setBranchModal(null)}>Batal</button>
+                    <button type="submit" className="action-btn-primary" disabled={saving}>
+                      {branchModal.mode === 'edit' ? 'Simpan Perubahan' : 'Simpan Cabang'}
+                    </button>
                   </div>
                 </form>
               </div>
@@ -1059,16 +1292,52 @@ function CatalogSettings({ token, onError }) {
       {tab === 'templates' && (
         <section className="data-panel settings-panel">
           <div className="panel-heading settings-heading">
-            <div><p className="eyebrow">INTEGRASI BOT WHATSAPP</p><h2>Template pesan bot</h2></div>
-            <span className="panel-count">{Object.keys(templates).length} template</span>
+            <div>
+              <p className="eyebrow">INTEGRASI BOT WHATSAPP</p>
+              <h2>Template pesan bot</h2>
+            </div>
+            <div className="template-heading-actions">
+              <span className="panel-count">{Object.keys(templates).length} template</span>
+              <button
+                type="button"
+                className="action-btn-primary"
+                onClick={saveAllTemplates}
+                disabled={saving}
+              >
+                Simpan Perubahan{dirtyTemplateKeys.length > 0 ? ` (${dirtyTemplateKeys.length})` : ''}
+              </button>
+            </div>
           </div>
           <div className="settings-rows">
-            {Object.entries(templates).map(([key, content]) => (
-              <div className="settings-row" key={key}>
-                <div className="settings-row-head"><b>{key}</b></div>
-                <label>Isi template balasan<textarea defaultValue={content} onBlur={e => saveTemplate(key, e.target.value)} /></label>
-              </div>
-            ))}
+            {Object.entries(templates).map(([key, content]) => {
+              const currentVal = templateDrafts[key] ?? content;
+              const isDirty = currentVal !== content;
+              return (
+                <div className={`settings-row ${isDirty ? 'is-dirty' : ''}`} key={key}>
+                  <div className="settings-row-head">
+                    <div className="template-key-group">
+                      <b>{key}</b>
+                      {isDirty && <span className="template-dirty-badge">Belum disimpan</span>}
+                    </div>
+                    <button
+                      type="button"
+                      className={`template-save-btn ${isDirty ? 'dirty' : ''}`}
+                      onClick={() => saveTemplate(key, currentVal)}
+                      disabled={saving}
+                    >
+                      Simpan Perubahan
+                    </button>
+                  </div>
+                  <label>
+                    Isi template balasan
+                    <textarea
+                      value={currentVal}
+                      onChange={e => setTemplateDrafts(prev => ({ ...prev, [key]: e.target.value }))}
+                    />
+                  </label>
+                </div>
+              );
+            })}
             {!Object.keys(templates).length && <p className="field-help">Template akan muncul di sini setelah diinisialisasi backend.</p>}
           </div>
         </section>

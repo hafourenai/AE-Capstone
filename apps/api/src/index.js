@@ -218,7 +218,7 @@ api.get('/public/menu', async (_, res) => {
   const menus = await catalog.getMenus();
   res.json(menus.filter(menu => menu.active && menu.stock > 0).sort((a, b) => a.name.localeCompare(b.name)));
 });
-api.get('/public/branches', (_, res) => res.json(rows('SELECT id,name,is_open FROM branches WHERE active=1 ORDER BY name')));
+api.get('/public/branches', (_, res) => res.json(rows('SELECT id,name,address,is_open FROM branches WHERE active=1 ORDER BY name')));
 api.get('/public/info', (_, res) => {
   const settings = Object.fromEntries(rows('SELECT key, value FROM business_settings').map(row => [row.key, row.value]));
   res.json(settings);
@@ -297,17 +297,19 @@ api.post('/admin/menu-sync', auth, async (_, res) => {
 const branchCreateInput = z.object({
   id: z.string().trim().max(50).optional(),
   name: z.string().trim().min(2).max(100),
+  address: z.string().trim().max(300).optional().default(''),
   is_open: z.boolean().optional().default(true),
 });
 
 const branchUpdateInput = z.object({
   name: z.string().trim().min(2).max(100).optional(),
+  address: z.string().trim().max(300).optional(),
   is_open: z.boolean().optional(),
   active: z.boolean().optional(),
 });
 
 api.get('/admin/branches', auth, (_, res) => {
-  res.json(rows('SELECT id, name, is_open, active FROM branches WHERE active = 1 ORDER BY name'));
+  res.json(rows('SELECT id, name, address, is_open, active FROM branches WHERE active = 1 ORDER BY name'));
 });
 
 api.post('/admin/branches', auth, validate(branchCreateInput), (req, res) => {
@@ -321,9 +323,9 @@ api.post('/admin/branches', auth, validate(branchCreateInput), (req, res) => {
     while (db.prepare('SELECT 1 FROM branches WHERE id = ?').get(finalId)) {
       finalId = `${baseId}-${counter++}`;
     }
-    db.prepare('INSERT INTO branches(id, name, active, is_open) VALUES (?, ?, 1, ?)')
-      .run(finalId, req.body.name, req.body.is_open ? 1 : 0);
-    const branch = db.prepare('SELECT id, name, is_open, active FROM branches WHERE id = ?').get(finalId);
+    db.prepare('INSERT INTO branches(id, name, address, active, is_open) VALUES (?, ?, ?, 1, ?)')
+      .run(finalId, req.body.name, req.body.address || '', req.body.is_open ? 1 : 0);
+    const branch = db.prepare('SELECT id, name, address, is_open, active FROM branches WHERE id = ?').get(finalId);
     res.status(201).json(branch);
   } catch (error) {
     res.status(400).json({ error: 'CREATE_BRANCH_FAILED', message: error.message });
@@ -335,12 +337,13 @@ api.patch('/admin/branches/:id', auth, validate(branchUpdateInput), (req, res) =
   if (!current) return res.status(404).json({ error: 'BRANCH_NOT_FOUND', message: 'Cabang tidak ditemukan' });
   const next = {
     name: req.body.name ?? current.name,
+    address: req.body.address ?? (current.address || ''),
     is_open: req.body.is_open === undefined ? current.is_open : (req.body.is_open ? 1 : 0),
     active: req.body.active === undefined ? current.active : (req.body.active ? 1 : 0),
   };
-  db.prepare('UPDATE branches SET name = ?, is_open = ?, active = ? WHERE id = ?')
-    .run(next.name, next.is_open, next.active, req.params.id);
-  const updated = db.prepare('SELECT id, name, is_open, active FROM branches WHERE id = ?').get(req.params.id);
+  db.prepare('UPDATE branches SET name = ?, address = ?, is_open = ?, active = ? WHERE id = ?')
+    .run(next.name, next.address, next.is_open, next.active, req.params.id);
+  const updated = db.prepare('SELECT id, name, address, is_open, active FROM branches WHERE id = ?').get(req.params.id);
   res.json(updated);
 });
 
